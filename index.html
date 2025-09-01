@@ -1,43 +1,458 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/src/main.ts" defer></script>
-  </head>
-
-  <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
-
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CNC Panel</title>
+  
+  <!-- Favicons -->
+  <link rel="icon" type="image/svg+xml" href="assets/robonerd-robot-logo-light.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="assets/robonerd-robot-logo-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="assets/robonerd-robot-logo-light.svg">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 4px;
+      background-color: #f5f5f5;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+    
+    .main_container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto 1fr auto;
+      gap: 4px;
+      height: calc(100vh - 8px);
+      overflow: hidden;
+    }
+    
+    .header_panel {
+      grid-column: 1 / -1;
+      background: white;
+      border-radius: 4px;
+      padding: 6px 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    
+    .left_panel {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+    }
+    
+    .right_panel {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+    }
+    
+    .panel {
+      background: white;
+      border-radius: 4px;
+      padding: 6px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      flex: 1;
+      overflow: hidden;
+    }
+    
+    .compact_panel {
+      background: white;
+      border-radius: 4px;
+      padding: 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background-color: #dc3545;
+    }
+    
+    .status-indicator.connected {
+      background-color: #28a745;
+    }
+    
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-right: 4px;
+      min-height: 36px;
+      touch-action: manipulation;
+      user-select: none;
+    }
+    
+    button:hover {
+      background-color: #0056b3;
+    }
+    
+    button:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+    }
+    
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+    
+    .info-item {
+      background-color: #f8f9fa;
+      padding: 6px;
+      border-radius: 4px;
+      border-left: 3px solid #007bff;
+      text-align: center;
+    }
+    
+    .info-label {
+      font-weight: bold;
+      color: #495057;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    
+    .info-value {
+      font-size: 16px;
+      color: #212529;
+      margin-top: 2px;
+      font-family: monospace;
+    }
+    
+    .log {
+      background-color: #343a40;
+      color: #ffffff;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      display: none;
+    }
+    
+    .log.visible {
+      display: block;
+    }
+    
+    .error {
+      color: #dc3545;
+      margin: 2px 0;
+      padding: 4px;
+      background-color: #f8d7da;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    
+    .warning {
+      color: #856404;
+      margin: 2px 0;
+      padding: 4px;
+      background-color: #fff3cd;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    
+    .emergency_stop {
+      background-color: #dc3545 !important;
+      font-weight: bold;
+      font-size: 16px;
+      padding: 15px 25px;
+    }
+    
+    .emergency_stop:hover {
+      background-color: #c82333 !important;
+    }
+    
+    .jog_controls {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 10px;
+      align-items: center;
+      margin: 15px 0;
+    }
+    
+    .jog_buttons {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      max-width: 150px;
+    }
+    
+    .jog_button {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      font-size: 12px;
+      font-weight: bold;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      touch-action: manipulation;
+    }
+    
+    .jog_button:active {
+      background-color: #004085;
+      transform: scale(0.95);
+    }
+    
+    .step_size_controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 10px 0;
+    }
+    
+    .step_size_input {
+      width: 80px;
+      padding: 5px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    
+    .coordinate_display {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr 1fr;
+      gap: 6px;
+      align-items: center;
+      margin: 6px 0;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    .coordinate_label {
+      font-weight: bold;
+      min-width: 50px;
+    }
+    
+    .coordinate_value {
+      background-color: #f8f9fa;
+      padding: 4px;
+      border-radius: 4px;
+      text-align: center;
+      border: 2px solid transparent;
+      font-size: 12px;
+    }
+    
+    .machine_coords {
+      border-color: #007bff;
+    }
+    
+    .work_coords {
+      border-color: #28a745;
+    }
+    
+    .zero_controls {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0;
+      flex-wrap: wrap;
+    }
+    
+    .navigation_controls {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="main_container">
+    <div class="header_panel">
+      <h2 style="margin: 0 0 6px 0; font-size: 16px;">CNC Panel - Genmitsu 3030 ProVer Max</h2>
+      <div class="status">
+        <div class="status-indicator" id="status_indicator"></div>
+        <span id="status_text" style="font-size: 13px;">Disconnected</span>
+        <span style="margin-left: 8px; font-weight: bold; font-size: 13px;">State: <span id="machine_state">Unknown</span></span>
+        <button id="connect_button">Connect</button>
+        <button id="disconnect_button" disabled>Disconnect</button>
+        <button id="status_button" disabled>Status</button>
+        <button id="clear_alarm_button" disabled>Clear Alarm</button>
+        <button id="toggle_log_button">Show Log</button>
       </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+      <button id="fullscreen_toggle_button" style="position: absolute; right: 16px; top: 16px; width: 56px; height: 56px; background: #007bff; color: white; border: none; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15); cursor: pointer;">
+        <span id="fullscreen_icon">⛶</span>
+      </button>
+    </div>
+    
+    <div class="left_panel">
+      <div class="compact_panel">
+        <h3 style="margin: 0 0 6px 0; font-size: 14px;">Machine Coordinates</h3>
+        
+        <div class="coordinate_display">
+          <div></div>
+          <div style="text-align: center; font-weight: bold; font-size: 12px;">X</div>
+          <div style="text-align: center; font-weight: bold; font-size: 12px;">Y</div>
+          <div style="text-align: center; font-weight: bold; font-size: 12px;">Z</div>
+          
+          <div class="coordinate_label" style="font-size: 12px;">MPos:</div>
+          <div class="coordinate_value machine_coords" id="machine_x_position">0.000</div>
+          <div class="coordinate_value machine_coords" id="machine_y_position">0.000</div>
+          <div class="coordinate_value machine_coords" id="machine_z_position">0.000</div>
+          
+          <div class="coordinate_label" style="font-size: 12px;">WPos:</div>
+          <div class="coordinate_value work_coords" id="work_x_position">0.000</div>
+          <div class="coordinate_value work_coords" id="work_y_position">0.000</div>
+          <div class="coordinate_value work_coords" id="work_z_position">0.000</div>
+        </div>
+      </div>
+      
+      <div class="compact_panel">
+        <h4 style="margin: 0 0 6px 0; font-size: 12px;">Work Coordinate Controls</h4>
+        <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+          <button id="home_button" style="font-size: 12px; padding: 6px 8px;">Home</button>
+          <button id="zero_all_button" style="font-size: 12px; padding: 6px 8px;">All 0</button>
+          <button id="zero_x_button" style="font-size: 12px; padding: 6px 8px;">X0</button>
+          <button id="zero_y_button" style="font-size: 12px; padding: 6px 8px;">Y0</button>
+          <button id="zero_z_button" style="font-size: 12px; padding: 6px 8px;">Z0</button>
+          <button id="zero_xy_button" style="font-size: 12px; padding: 6px 8px;">X0Y0</button>
+        </div>
+        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+          <button id="go_work_zero_button" style="font-size: 12px; padding: 6px 8px;">Go X0Y0</button>
+          <button id="go_machine_zero_button" style="font-size: 12px; padding: 6px 8px;">Go Machine X0Y0</button>
+        </div>
+      </div>
+      
+      <div class="compact_panel">
+        <h4 style="margin: 0 0 6px 0; font-size: 12px;">XY Position Presets</h4>
+        <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+          <button id="save_xy_preset_button" style="font-size: 12px; padding: 6px 12px;">Save Current XY Position</button>
+        </div>
+        <div id="xy_presets_list" style="display: flex; gap: 4px; flex-wrap: wrap; flex-direction: column;">
+          <!-- Dynamic XY preset buttons will be added here -->
+        </div>
+      </div>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
-    </main>
-  </body>
+      <div id="tool_change_warning" style="display: none; background: #ffeb3b; color: #e65100; padding: 8px; margin: 4px 0; border-radius: 4px; font-size: 12px; text-align: center;">
+        ⚠️ Z offset unknown - probe or set Z before running jobs
+      </div>
+
+      <div class="compact_panel">
+        <h4 style="margin: 0 0 6px 0; font-size: 12px;">Z Setup & Tool Change</h4>
+        <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+          <button id="probe_z_button" style="font-size: 12px; padding: 6px 8px;">Probe Z</button>
+          <button id="tool_change_button" style="font-size: 12px; padding: 6px 8px;">Tool Change</button>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center;">
+          <label style="font-size: 12px;">Feed:</label>
+          <input type="number" id="probe_feed_input" value="50" min="10" max="200" style="width: 60px; padding: 4px; font-size: 12px;">
+          <span style="font-size: 12px;">mm/min</span>
+        </div>
+      </div>
+      
+      <div class="compact_panel" id="log_panel" style="flex: 1; min-height: 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <h4 style="margin: 0; font-size: 12px;">Communication Log</h4>
+          <button id="copy_log_button" style="font-size: 12px; padding: 4px 6px;">Copy</button>
+        </div>
+        <div class="log" id="communication_log" style="height: 80px;"></div>
+      </div>
+    </div>
+    
+    <div class="right_panel">
+      <div class="panel">
+        <h3 style="margin: 0 0 8px 0; font-size: 14px;">Manual Controls</h3>
+        
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+          <label for="step_size_input" style="font-size: 12px;">Step:</label>
+          <input type="number" id="step_size_input" class="step_size_input" value="1" min="0.1" max="100" step="0.1" style="width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;">
+          <span style="font-size: 12px;">mm</span>
+          <button id="step_01_button" style="padding: 4px 6px; font-size: 12px;">0.1</button>
+          <button id="step_1_button" style="padding: 4px 6px; font-size: 12px;">1</button>
+          <button id="step_10_button" style="padding: 4px 6px; font-size: 12px;">10</button>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start;">
+          <div>
+            <h4 style="margin: 0 0 6px 0; font-size: 12px; text-align: center;">X/Y Axis</h4>
+            <div class="jog_buttons">
+              <div></div>
+              <button id="jog_y_plus_button" class="jog_button">Y+</button>
+              <div></div>
+              <button id="jog_x_minus_button" class="jog_button">X-</button>
+              <div></div>
+              <button id="jog_x_plus_button" class="jog_button">X+</button>
+              <div></div>
+              <button id="jog_y_minus_button" class="jog_button">Y-</button>
+              <div></div>
+            </div>
+          </div>
+          
+          <div>
+            <h4 style="margin: 0 0 6px 0; font-size: 12px; text-align: center;">Z Axis</h4>
+            <div class="jog_buttons">
+              <div></div>
+              <button id="jog_z_plus_button" class="jog_button">Z+</button>
+              <div></div>
+              <div></div>
+              <div></div>
+              <div></div>
+              <div></div>
+              <button id="jog_z_minus_button" class="jog_button">Z-</button>
+              <div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="error_container" style="grid-column: 1 / -1; min-height: 0;"></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      var fullscreen_toggle_button = document.getElementById('fullscreen_toggle_button');
+      var fullscreen_icon = document.getElementById('fullscreen_icon');
+      fullscreen_toggle_button.addEventListener('click', function() {
+        // Only call requestFullscreen directly in the click handler
+        try {
+          if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+            fullscreen_icon.textContent = '🡽';
+          } else {
+            document.exitFullscreen();
+            fullscreen_icon.textContent = '⛶';
+          }
+        } catch (err) {
+          // Suppress permission errors
+        }
+      });
+      document.addEventListener('fullscreenchange', function() {
+        if (!document.fullscreenElement) {
+          fullscreen_icon.textContent = '⛶';
+        } else {
+          fullscreen_icon.textContent = '🡽';
+        }
+      });
+    });
+  </script>
+</body>
 </html>
