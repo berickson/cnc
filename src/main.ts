@@ -40,12 +40,14 @@ let workZPos: HTMLElement | null;
 // Control elements
 let homeButton: HTMLButtonElement | null;
 let clearAlarmButton: HTMLButtonElement | null;
+let copyLogButton: HTMLButtonElement | null;
 let jogButtons: { [key: string]: HTMLButtonElement | null } = {};
 let stepSizeInput: HTMLInputElement | null;
 let zeroButtons: { [key: string]: HTMLButtonElement | null } = {};
 
 let isConnected = false;
 let discoveredDevices: CncDevice[] = [];
+let lastWorkOffset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
 
 async function greet() {
   if (greetMsgEl && greetInputEl) {
@@ -138,6 +140,7 @@ async function disconnect() {
   try {
     await CncManager.disconnect();
     updateConnectionStatus(false);
+    lastWorkOffset = { x: 0, y: 0, z: 0 }; // Reset work offset
     logMessage("Disconnected from CNC", 'success');
   } catch (error) {
     logMessage(`Disconnect error: ${error}`, 'error');
@@ -149,9 +152,17 @@ async function updateMachineStatus() {
   
   try {
     const status = await CncManager.getStatus();
-    const parsed = CncManager.parseStatus(status);
+    logMessage(`DEBUG: Raw status response: "${status}"`);
+    const parsed = CncManager.parseStatus(status, lastWorkOffset);
+    logMessage(`DEBUG: Parsed status: ${parsed ? JSON.stringify(parsed) : 'null'}`);
     
     if (parsed) {
+      // Update stored work offset if this status contains WCO
+      if ((parsed as any).workOffset) {
+        lastWorkOffset = (parsed as any).workOffset;
+        logMessage(`DEBUG: Updated work offset: ${JSON.stringify(lastWorkOffset)}`);
+      }
+      
       // Update machine state
       if (machineState) {
         machineState.textContent = parsed.state;
@@ -166,6 +177,10 @@ async function updateMachineStatus() {
       if (workXPos) workXPos.textContent = parsed.workPosition.x.toFixed(3);
       if (workYPos) workYPos.textContent = parsed.workPosition.y.toFixed(3);
       if (workZPos) workZPos.textContent = parsed.workPosition.z.toFixed(3);
+      
+      logMessage(`DEBUG: Updated coordinates - Machine: ${parsed.position.x},${parsed.position.y},${parsed.position.z} Work: ${parsed.workPosition.x},${parsed.workPosition.y},${parsed.workPosition.z}`);
+    } else {
+      logMessage(`DEBUG: Failed to parse status response: "${status}"`);
     }
     
   } catch (error) {
@@ -245,6 +260,27 @@ async function goToMachineZero() {
   }
 }
 
+async function copyLog() {
+  if (!communicationLog) return;
+  
+  const text = communicationLog.textContent || '';
+  
+  try {
+    await (window as any).tauriCopyToClipboard(text);
+    
+    // Temporarily change button text to show success
+    if (copyLogButton) {
+      const originalText = copyLogButton.textContent;
+      copyLogButton.textContent = 'Copied!';
+      setTimeout(() => {
+        if (copyLogButton) copyLogButton.textContent = originalText;
+      }, 1000);
+    }
+  } catch (error) {
+    logMessage(`Failed to copy log: ${error}`, 'error');
+  }
+}
+
 function setupStepSizeButtons() {
   const stepButtons = [
     { id: 'step_01_button', value: 0.1 },
@@ -303,6 +339,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // Control elements
   homeButton = document.getElementById("home_button") as HTMLButtonElement;
   clearAlarmButton = document.getElementById("clear_alarm_button") as HTMLButtonElement;
+  copyLogButton = document.getElementById("copy_log_button") as HTMLButtonElement;
   stepSizeInput = document.getElementById("step_size_input") as HTMLInputElement;
   
   // Jog buttons
@@ -345,6 +382,10 @@ window.addEventListener("DOMContentLoaded", () => {
   
   if (clearAlarmButton) {
     clearAlarmButton.addEventListener("click", clearAlarm);
+  }
+  
+  if (copyLogButton) {
+    copyLogButton.addEventListener("click", copyLog);
   }
   
   if (toggleLogButton) {

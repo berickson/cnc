@@ -106,23 +106,72 @@ export class CncManager {
   /**
    * Parse Grbl status response
    */
-  static parseStatus(statusResponse: string): {
+  static parseStatus(statusResponse: string, lastKnownWCO?: { x: number; y: number; z: number }): {
     state: string;
     position: { x: number; y: number; z: number };
     workPosition: { x: number; y: number; z: number };
+    workOffset?: { x: number; y: number; z: number };
   } | null {
-    // Parse Grbl status format: <Idle|MPos:0.000,0.000,0.000|WPos:0.000,0.000,0.000>
-    const match = statusResponse.match(/<([^|]+)\|MPos:([^|]+)\|WPos:([^>]+)>/);
-    if (!match) return null;
+    // Clean up the response - remove "ok" and trim whitespace
+    const cleanResponse = statusResponse.replace(/\n?ok\s*$/m, '').trim();
+    
+    // Parse Grbl status format: <State|MPos:x,y,z|...>
+    // May include: Bf:, FS:, Pn:, WCO:, WPos:, Ov:, etc.
+    const statusMatch = cleanResponse.match(/<([^|>]+)(?:\|([^>]+))?>/);
+    if (!statusMatch) return null;
 
-    const [, state, mpos, wpos] = match;
-    const [mx, my, mz] = mpos.split(',').map(parseFloat);
-    const [wx, wy, wz] = wpos.split(',').map(parseFloat);
+    const [, state, statusFields] = statusMatch;
+    
+    // Parse MPos (machine position) - always present
+    let mpos: number[] = [];
+    let wco: number[] | null = null; // Work coordinate offset from this status
+    let wpos: number[] = []; // Work position, if explicitly provided
+    
+    if (statusFields) {
+      const fields = statusFields.split('|');
+      
+      for (const field of fields) {
+        if (field.startsWith('MPos:')) {
+          mpos = field.substring(5).split(',').map(parseFloat);
+        } else if (field.startsWith('WPos:')) {
+          wpos = field.substring(5).split(',').map(parseFloat);
+        } else if (field.startsWith('WCO:')) {
+          wco = field.substring(4).split(',').map(parseFloat);
+        }
+      }
+    }
+    
+    if (mpos.length < 3) return null; // MPos is required
+    
+    // Determine which WCO to use: current status or last known
+    let effectiveWCO = { x: 0, y: 0, z: 0 };
+    if (wco && wco.length >= 3) {
+      // Use WCO from current status
+      effectiveWCO = { x: wco[0], y: wco[1], z: wco[2] };
+    } else if (lastKnownWCO) {
+      // Use last known WCO
+      effectiveWCO = lastKnownWCO;
+    }
+    
+    // Calculate work position: WPos = MPos - WCO
+    // If WPos is explicitly provided, use it; otherwise calculate it
+    const workPosition = wpos.length >= 3 ? wpos : [
+      mpos[0] - effectiveWCO.x,
+      mpos[1] - effectiveWCO.y,
+      mpos[2] - effectiveWCO.z
+    ];
 
-    return {
+    const result = {
       state,
-      position: { x: mx, y: my, z: mz },
-      workPosition: { x: wx, y: wy, z: wz }
+      position: { x: mpos[0], y: mpos[1], z: mpos[2] },
+      workPosition: { x: workPosition[0], y: workPosition[1], z: workPosition[2] }
     };
+
+    // Include work offset if it was provided in this status
+    if (wco && wco.length >= 3) {
+      (result as any).workOffset = { x: wco[0], y: wco[1], z: wco[2] };
+    }
+
+    return result;
   }
 }

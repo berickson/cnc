@@ -371,7 +371,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
           <h4 style="margin: 0; font-size: 12px;">Communication Log</h4>
           <div>
-            <button id="copy_log_button" style="font-size: 12px; padding: 4px 6px;" onclick="if(window.cncSerial) { window.cncSerial.copy_log(); } else { alert('CNC Serial not available'); }">Copy</button>
+            <button id="copy_log_button" style="font-size: 12px; padding: 4px 6px;">Copy</button>
           </div>
         </div>
         <div class="log" id="communication_log" style="height: 80px;"></div>
@@ -429,13 +429,6 @@
   </div>
 
   <script type="module" src="/src/main.ts"></script>
-  <script src="/cnc-serial.js"></script>
-  <script>
-    console.log('Inline script running - checking for window.cncSerial');
-    setTimeout(() => {
-      console.log('After timeout - window.cncSerial:', window.cncSerial);
-    }, 1000);
-  </script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       var fullscreen_toggle_button = document.getElementById('fullscreen_toggle_button');

@@ -106,7 +106,7 @@ impl CncManager {
                     let data = &buf[..size];
                     match std::str::from_utf8(data) {
                         Ok(json_str) => {
-                            println!("� Received multicast from {}: {}", addr, json_str);
+                            println!("📨 Received multicast from {}: {}", addr, json_str);
                             match serde_json::from_str::<GenmitsuBroadcast>(json_str) {
                                 Ok(broadcast) => {
                                     println!("🎯 Parsed Genmitsu device: {}", broadcast.name);
@@ -119,6 +119,10 @@ impl CncManager {
                                         device.name = broadcast.name;
                                         device.mac = Some(broadcast.uuid);
                                         devices.push(device);
+                                        
+                                        // 🚀 SPEED IMPROVEMENT: Return immediately after first valid device
+                                        println!("✅ Found valid CNC device, connecting immediately!");
+                                        break;
                                     }
                                 }
                                 Err(e) => {
@@ -150,11 +154,11 @@ impl CncManager {
     fn probe_device(&self, ip: &str, port: u16) -> Result<CncDevice> {
         let addr = format!("{}:{}", ip, port);
 
-        // Try to connect with a short timeout
-        match TcpStream::connect_timeout(&addr.parse()?, Duration::from_millis(2000)) {
+        // Try to connect with a shorter timeout for faster discovery
+        match TcpStream::connect_timeout(&addr.parse()?, Duration::from_millis(1000)) {
             Ok(mut stream) => {
-                stream.set_read_timeout(Some(Duration::from_millis(2000)))?;
-                stream.set_write_timeout(Some(Duration::from_millis(1000)))?;
+                stream.set_read_timeout(Some(Duration::from_millis(1000)))?;
+                stream.set_write_timeout(Some(Duration::from_millis(500)))?;
 
                 // Send Grbl status query
                 let _ = stream.write_all(b"?\n");
@@ -173,24 +177,14 @@ impl CncManager {
                     || response.contains("MPos")
                     || response.contains("VER:")
                 {
-                    // Extract firmware version if available
-                    let mut firmware = None;
-                    if response.contains("VER:") {
-                        // Try to get version info
-                        let _ = stream.write_all(b"$I\n");
-                        if let Ok(size) = stream.read(&mut buffer) {
-                            let version_response =
-                                String::from_utf8_lossy(&buffer[..size]).to_string();
-                            firmware = self.extract_firmware_info(&version_response);
-                        }
-                    }
-
+                    // Skip firmware version check for faster connection
+                    // We can get this info later if needed
                     Ok(CncDevice {
                         name: format!("CNC at {}", ip),
                         ip: ip.to_string(),
                         port,
                         mac: None,
-                        firmware,
+                        firmware: None, // Skip version check for speed
                     })
                 } else {
                     Err(anyhow!(
@@ -204,15 +198,6 @@ impl CncManager {
     }
 
     /// Extract firmware information from response
-    fn extract_firmware_info(&self, response: &str) -> Option<String> {
-        if let Some(start) = response.find("Grbl") {
-            if let Some(end) = response[start..].find('\n') {
-                return Some(response[start..start + end].to_string());
-            }
-        }
-        None
-    }
-
     /// Connect to a specific CNC device
     pub fn connect(&mut self, device: &CncDevice) -> Result<()> {
         let addr = format!("{}:{}", device.ip, device.port);

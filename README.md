@@ -1,11 +1,11 @@
 # CNC Panel
 
-A web-based control panel for the Genmitsu 3030 ProVer Max CNC machine using the Web Serial API.
+A Tauri desktop application for the Genmitsu 3030 ProVer Max CNC machine using WiFi TCP connection.
 
 ## Features
 
-- **Direct USB Connection**: No additional software required - connects directly to CNC via Web Serial API
-- **Auto-Connect**: Automatically reconnects to previously paired CNC on page load
+- **WiFi Connection**: Connects to CNC via multicast discovery and TCP communication
+- **Auto-Discovery**: Automatically discovers and connects to Genmitsu CNC devices on the network
 - **Advanced Jogging**: Tap for precise steps, hold for continuous movement (0.1mm, 1mm, 10mm steps)
 - **Work Coordinate System**: Set and navigate work zero points with real-time position display
 - **Touch-Friendly**: Works on touch enabled devices
@@ -13,12 +13,20 @@ A web-based control panel for the Genmitsu 3030 ProVer Max CNC machine using the
 
 ## Quick Start
 
-### Running
-1. Start local web server
+### Development
+1. Install dependencies:
 ```bash
-python3 server.py
+pnpm install
 ```
-2. open http://localhost:8080 in chrome browser
+2. Run in development mode:
+```bash
+pnpm tauri dev
+```
+
+### Building
+```bash
+pnpm tauri build
+```
 3. Click "Connect to CNC" and select your CNC's USB port
 <br/>
 Panel will auto-connect on future visits
@@ -63,11 +71,11 @@ Panel will auto-connect on future visits
 
 ## Technical Details
 
-- **Framework**: Vanilla HTML/CSS/JavaScript
-- **Communication**: Direct Web Serial API to USB
-- **Protocol**: Grbl firmware commands
-- **Baud Rate**: 115200
-- **Update Rate**: 20Hz during movement, 2-second settling
+- **Framework**: Tauri (Rust + TypeScript/HTML/CSS)
+- **Communication**: WiFi TCP connection via multicast discovery
+- **Protocol**: Grbl firmware commands over TCP
+- **Discovery**: mDNS multicast (224.0.0.251:1234)
+- **Update Rate**: 10Hz status polling during operation
 - **Coordinates**: G54 work coordinate system
 
 ## Troubleshooting

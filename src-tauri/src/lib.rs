@@ -17,7 +17,8 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn discover_cnc_devices(state: tauri::State<AppState>) -> Result<Vec<CncDevice>, String> {
     let manager = state.cnc_manager.lock().map_err(|e| e.to_string())?;
-    manager.discover_devices(5000).map_err(|e| e.to_string())
+    // Reduced timeout since we connect to first device found
+    manager.discover_devices(3000).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

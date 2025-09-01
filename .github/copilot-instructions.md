@@ -1,0 +1,4 @@
+- Never mark items as complete unless Brian explicitly tells you to
+- Don't make any code changes without his approval
+- If there are options for optimization, present them to Brian for approval before implementing.
+- The project uses pnpm
