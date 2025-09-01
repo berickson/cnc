@@ -69,6 +69,114 @@ fn set_cnc_work_zero(axes: String, state: tauri::State<AppState>) -> Result<Stri
     manager.set_work_zero(&axes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    use std::process::Command;
+    
+    // Use system clipboard utilities
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("xclip")
+            .arg("-selection")
+            .arg("clipboard")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+            
+        if let Ok(mut child) = output {
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = child.wait();
+            return Ok(());
+        }
+        
+        // Fallback to wl-copy for Wayland
+        let output = Command::new("wl-copy")
+            .arg(text)
+            .output();
+            
+        if output.is_ok() {
+            return Ok(());
+        }
+        
+        return Err("No clipboard utility available (xclip or wl-copy)".to_string());
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        
+        // Windows clipboard implementation would go here
+        // For now, return an error
+        return Err("Windows clipboard not implemented".to_string());
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+            
+        if let Ok(mut child) = output {
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = child.wait();
+            return Ok(());
+        }
+        
+        return Err("pbcopy not available".to_string());
+    }
+}
+
+#[tauri::command]
+fn read_from_clipboard() -> Result<String, String> {
+    use std::process::Command;
+    
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("xclip")
+            .arg("-selection")
+            .arg("clipboard")
+            .arg("-o")
+            .output();
+            
+        if let Ok(output) = output {
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+        
+        // Fallback to wl-paste for Wayland
+        let output = Command::new("wl-paste")
+            .output();
+            
+        if let Ok(output) = output {
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+        
+        return Err("No clipboard utility available (xclip or wl-paste)".to_string());
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        return Err("Windows clipboard not implemented".to_string());
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("pbpaste")
+            .output();
+            
+        if let Ok(output) = output {
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+        
+        return Err("pbpaste not available".to_string());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -90,7 +198,9 @@ pub fn run() {
             get_cnc_status,
             home_cnc,
             reset_cnc,
-            set_cnc_work_zero
+            set_cnc_work_zero,
+            copy_to_clipboard,
+            read_from_clipboard
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,6 @@
 class CNCSerial {
   constructor() {
+    console.log('CNCSerial constructor called - cnc-serial.js is loading!'); // Debug log
     this.port = null;
     this.reader = null;
     this.writer = null;
@@ -1365,13 +1366,63 @@ class CNCSerial {
   }
   
   copy_log() {
-    navigator.clipboard.writeText(this.log_element.textContent).then(() => {
-      // Temporarily change button text to show success
-      const original_text = this.copy_log_button.textContent;
-      this.copy_log_button.textContent = 'Copied!';
-      setTimeout(() => {
-        this.copy_log_button.textContent = original_text;
-      }, 1000);
+    const text = this.log_element.textContent;
+    
+    // Use our working Tauri clipboard command
+    const copyToClipboard = async (text) => {
+      // Check if we have the global Tauri clipboard function
+      if (window.tauriCopyToClipboard) {
+        try {
+          await window.tauriCopyToClipboard(text);
+          return true;
+        } catch (err) {
+          console.log('Tauri clipboard failed, trying browser API:', err);
+        }
+      }
+      
+      // Method 1: Modern Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (err) {
+          console.log('Clipboard API failed:', err);
+        }
+      }
+      
+      // Method 2: Legacy execCommand (fallback for older browsers or restricted contexts)
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const result = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (result) {
+          return true;
+        }
+      } catch (err) {
+        console.log('execCommand failed:', err);
+      }
+      
+      return false;
+    };
+    
+    copyToClipboard(text).then((success) => {
+      if (success) {
+        // Temporarily change button text to show success
+        const original_text = this.copy_log_button.textContent;
+        this.copy_log_button.textContent = 'Copied!';
+        setTimeout(() => {
+          this.copy_log_button.textContent = original_text;
+        }, 1000);
+      } else {
+        throw new Error('All clipboard methods failed');
+      }
     }).catch(err => {
       this.show_error('Failed to copy log: ' + err.message);
     });
@@ -1576,6 +1627,7 @@ class CNCSerial {
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', () => {
   const serial = new CNCSerial();
+  window.cncSerial = serial; // Make it globally available
   // Setup fullscreen button event listener here to ensure DOM is ready
   const fullscreen_toggle_button = document.getElementById('fullscreen_toggle_button');
   if (fullscreen_toggle_button) {

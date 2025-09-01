@@ -1,11 +1,14 @@
-# CNC Panel Development Plans
+# CNC P[x] Use wifi serial connection to genmitsu instead of web-serial
+[x] Copy button should copy to clipboard, removed test button after confirming functionality works
+[ ] Optionally use real serial with tauri rust packagesl Development Plans
 
 ## Port
 cnc-panel is in the beginning phase of porting into Tauri the following need to be done
 
 [x] fix up assets so robonerd icon is the app icon, remove sample icons
-[ ] Replace web-serial
-- [ ] Use wifi serial connection to genmitsu instead of web-serial
+[x] Replace web-serial
+- [x] Use wifi serial connection to genmitsu instead of web-serial
+- [x] Copy button should copy to clipboard, but stopped working when we moved to Tauri
 - [ ] Optionally use real serial with tauri rust packages
 ## Next Development Priorities
 [x] UI should target 7" 1024×600 touch, no keyboard, no mouse
