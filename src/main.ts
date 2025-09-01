@@ -51,6 +51,7 @@ let xyPresetsList: HTMLElement | null;
 let isConnected = false;
 let discoveredDevices: CncDevice[] = [];
 let lastWorkOffset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
+let currentAlarmCode: number | null = null; // Track current alarm code
 let savedXyCoordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
 
 async function greet() {
@@ -63,6 +64,20 @@ async function greet() {
 
 function logMessage(message: string, type: 'info' | 'error' | 'success' = 'info') {
   if (!communicationLog) return;
+  
+  // Check for alarm codes and alarm-related messages
+  const alarmMatch = message.match(/ALARM:(\d+)/);
+  if (alarmMatch) {
+    currentAlarmCode = parseInt(alarmMatch[1]);
+  } else if (message.includes('[MSG:Check Limits]')) {
+    // This indicates a hard limit alarm (alarm code 9)
+    currentAlarmCode = 9;
+  }
+  
+  // Clear alarm code when machine returns to normal states
+  if (message.includes('<Idle|') || message.includes('ok')) {
+    currentAlarmCode = null;
+  }
   
   const timestamp = new Date().toLocaleTimeString();
   const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
@@ -128,6 +143,26 @@ async function discoverAndConnect() {
     updateConnectionStatus(true, device);
     logMessage(`Successfully connected to ${device.name}`, 'success');
     
+    // Check for alarm status immediately after connecting
+    try {
+      logMessage("Checking initial alarm status...", 'info');
+      const alarmStatus = await CncManager.checkAlarmStatus();
+      logMessage(`Initial alarm status check result: ${alarmStatus}`, 'info');
+      
+      // Parse the status response to extract alarm information
+      const parsed = CncManager.parseStatus(alarmStatus);
+      if (parsed && parsed.state.includes('Alarm:')) {
+        // Extract alarm code from parsed state like "Alarm: 9 (Hard limit triggered)"
+        const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
+        if (alarmMatch) {
+          currentAlarmCode = parseInt(alarmMatch[1]);
+          logMessage(`Detected alarm code on connect: ${currentAlarmCode}`, 'error');
+        }
+      }
+    } catch (alarmError) {
+      logMessage(`Could not check alarm status on connect: ${alarmError}`, 'error');
+    }
+    
     // Get initial status
     await updateMachineStatus();
     
@@ -166,7 +201,40 @@ async function updateMachineStatus() {
       
       // Update machine state
       if (machineState) {
-        machineState.textContent = parsed.state;
+        let displayState = parsed.state;
+        
+        // Extract alarm code from parsed state if present
+        if (parsed.state.includes('Alarm:')) {
+          // The parseStatus already formats it as "Alarm: 9 (Hard limit triggered)"
+          // So we can use it directly
+          displayState = parsed.state;
+          
+          // Also update our tracked alarm code
+          const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
+          if (alarmMatch) {
+            currentAlarmCode = parseInt(alarmMatch[1]);
+          }
+        } else if (parsed.state.includes('Alarm') && currentAlarmCode !== null) {
+          // Fallback: if we just have "Alarm" but have a tracked code, show details
+          const alarmDescriptions: { [key: number]: string } = {
+            1: 'Hard limit during unlock',
+            2: 'Motion exceeds travel',
+            3: 'Reset while moving',
+            4: 'Probe fail',
+            5: 'Probe fail',
+            6: 'Homing fail',
+            7: 'Homing fail',
+            8: 'Homing fail',
+            9: 'Hard limit triggered',
+            10: 'Soft limit error'
+          };
+          displayState = `Alarm: ${currentAlarmCode} (${alarmDescriptions[currentAlarmCode] || 'Unknown'})`;
+        } else {
+          // Clear alarm code if not in alarm state
+          currentAlarmCode = null;
+        }
+        
+        machineState.textContent = displayState;
         machineState.style.color = parsed.state === 'Idle' ? '#28a745' : 
                                    parsed.state.includes('Alarm') ? '#dc3545' : '#ffc107';
       }
@@ -368,24 +436,100 @@ function deleteSavedXyPosition(name: string) {
   }
 }
 
-// Rename a saved XY position
-function renameSavedXyPosition(oldName: string) {
-  const newName = prompt(`Rename "${oldName}" to:`, oldName);
-  if (!newName || newName === oldName) return;
+// Edit a saved XY position
+function editSavedXyPosition(oldName: string) {
+  const coords = savedXyCoordinates[oldName];
+  if (!coords) return;
   
-  // Check if new name already exists
-  if (savedXyCoordinates[newName]) {
-    alert(`Preset "${newName}" already exists!`);
-    return;
-  }
+  // Create modal dialog
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;';
   
-  // Move the coordinates to the new name
-  savedXyCoordinates[newName] = savedXyCoordinates[oldName];
-  delete savedXyCoordinates[oldName];
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background: white; padding: 20px; border-radius: 8px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
   
-  saveXyCoordinates();
-  logMessage(`Renamed preset "${oldName}" to "${newName}"`, 'success');
-  updateXyPresetsUi();
+  dialog.innerHTML = `
+    <div style="margin-bottom: 15px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Name:</label>
+      <input type="text" id="edit-name" value="${oldName}" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+    </div>
+    <div style="margin-bottom: 15px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">X:</label>
+      <input type="text" id="edit-x" value="${coords.x.toFixed(3)}" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+    </div>
+    <div style="margin-bottom: 20px;">
+      <label style="display: block; margin-bottom: 5px; font-weight: bold;">Y:</label>
+      <input type="text" id="edit-y" value="${coords.y.toFixed(3)}" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+    </div>
+    <div style="text-align: right;">
+      <button id="edit-cancel" style="margin-right: 10px; padding: 8px 16px; border: 1px solid #ccc; background: white; border-radius: 4px; cursor: pointer;">Cancel</button>
+      <button id="edit-ok" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">OK</button>
+    </div>
+  `;
+  
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  
+  // Focus the name input
+  const nameInput = dialog.querySelector('#edit-name') as HTMLInputElement;
+  nameInput.focus();
+  nameInput.select();
+  
+  // Handle OK button
+  dialog.querySelector('#edit-ok')?.addEventListener('click', () => {
+    const newName = (dialog.querySelector('#edit-name') as HTMLInputElement).value.trim();
+    const newX = parseFloat((dialog.querySelector('#edit-x') as HTMLInputElement).value);
+    const newY = parseFloat((dialog.querySelector('#edit-y') as HTMLInputElement).value);
+    
+    if (!newName) {
+      alert('Name cannot be empty');
+      return;
+    }
+    
+    if (isNaN(newX) || isNaN(newY)) {
+      alert('X and Y must be valid numbers');
+      return;
+    }
+    
+    // Check if new name already exists (and it's different from current)
+    if (newName !== oldName && savedXyCoordinates[newName]) {
+      alert(`Preset "${newName}" already exists!`);
+      return;
+    }
+    
+    // Remove old entry if name changed
+    if (newName !== oldName) {
+      delete savedXyCoordinates[oldName];
+    }
+    
+    // Save with new values
+    savedXyCoordinates[newName] = { 
+      x: newX, 
+      y: newY, 
+      timestamp: new Date().toISOString() 
+    };
+    
+    saveXyCoordinates();
+    logMessage(`Updated preset "${newName}"`, 'success');
+    updateXyPresetsUi();
+    document.body.removeChild(overlay);
+  });
+  
+  // Handle Cancel button and overlay click
+  const closeDialog = () => document.body.removeChild(overlay);
+  dialog.querySelector('#edit-cancel')?.addEventListener('click', closeDialog);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeDialog();
+  });
+  
+  // Handle Enter key
+  dialog.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      dialog.querySelector('#edit-ok')?.dispatchEvent(new Event('click'));
+    } else if (e.key === 'Escape') {
+      closeDialog();
+    }
+  });
 }
 
 // Update the XY presets UI
@@ -409,7 +553,7 @@ function updateXyPresetsUi() {
     renameButton.textContent = '✏️';
     renameButton.title = 'Rename preset';
     renameButton.style.cssText = 'font-size: 11px; padding: 4px 6px; background: #007bff; color: white; border: none; border-radius: 3px;';
-    renameButton.addEventListener('click', () => renameSavedXyPosition(name));
+    renameButton.addEventListener('click', () => editSavedXyPosition(name));
     
     // Delete button
     const deleteButton = document.createElement('button');

@@ -25,7 +25,22 @@ export class CncManager {
    * Connect to a specific CNC device
    */
   static async connect(device: CncDevice): Promise<void> {
-    return await invoke("connect_to_cnc", { device });
+    await invoke("connect_to_cnc", { device });
+    
+    // Check for alarm status immediately after connecting
+    try {
+      const alarmStatus = await invoke<string>("check_cnc_alarm_status");
+      console.log('Initial alarm status check:', alarmStatus);
+    } catch (alarmError) {
+      console.warn('Could not check alarm status on connect:', alarmError);
+    }
+  }
+
+  /**
+   * Check current alarm status - can be called when needed
+   */
+  static async checkAlarmStatus(): Promise<string> {
+    return await invoke<string>("check_cnc_alarm_status");
   }
 
   /**
@@ -115,12 +130,60 @@ export class CncManager {
     // Clean up the response - remove "ok" and trim whitespace
     const cleanResponse = statusResponse.replace(/\n?ok\s*$/m, '').trim();
     
+    // Check for ALARM messages first (e.g., "ALARM:9")
+    const alarmMatch = cleanResponse.match(/ALARM:(\d+)/);
+    if (alarmMatch) {
+      const alarmCode = parseInt(alarmMatch[1]);
+      const alarmDescriptions: { [key: number]: string } = {
+        1: 'Hard limit triggered during $X unlock',
+        2: 'G-code motion target exceeds machine travel',
+        3: 'Reset while in motion',
+        4: 'Probe fail',
+        5: 'Probe fail',
+        6: 'Homing fail',
+        7: 'Homing fail',
+        8: 'Homing fail',
+        9: 'Hard limit triggered',
+        10: 'Soft limit error'
+      };
+      
+      return {
+        state: `Alarm: ${alarmCode} (${alarmDescriptions[alarmCode] || 'Unknown alarm'})`,
+        position: { x: 0, y: 0, z: 0 },
+        workPosition: { x: 0, y: 0, z: 0 }
+      };
+    }
+    
     // Parse Grbl status format: <State|MPos:x,y,z|...>
     // May include: Bf:, FS:, Pn:, WCO:, WPos:, Ov:, etc.
     const statusMatch = cleanResponse.match(/<([^|>]+)(?:\|([^>]+))?>/);
     if (!statusMatch) return null;
 
     const [, state, statusFields] = statusMatch;
+    
+    // Handle generic "Alarm" state (common in older Grbl versions)
+    if (state === 'Alarm' && statusFields) {
+      // Look for pin states that indicate limit switches
+      const pinMatch = statusFields.match(/Pn:([^|]+)/);
+      if (pinMatch) {
+        const pins = pinMatch[1];
+        // If pins contain X, Y, or Z, it's likely a hard limit alarm
+        if (pins.match(/[XYZ]/)) {
+          return {
+            state: 'Alarm: 9 (Hard limit triggered)',
+            position: { x: 0, y: 0, z: 0 },
+            workPosition: { x: 0, y: 0, z: 0 }
+          };
+        }
+      }
+      
+      // Default alarm without specific code
+      return {
+        state: 'Alarm: Unknown (Check limits/position)',
+        position: { x: 0, y: 0, z: 0 },
+        workPosition: { x: 0, y: 0, z: 0 }
+      };
+    }
     
     // Parse MPos (machine position) - always present
     let mpos: number[] = [];

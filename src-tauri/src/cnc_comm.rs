@@ -264,6 +264,13 @@ impl CncManager {
         let command = format!("G10L20P1{}", axes);
         self.send_command(&command)
     }
+
+    /// Check alarm status on connect - can query current alarm state
+    pub fn check_alarm_status(&mut self) -> Result<String> {
+        // Send status query to get current machine state
+        // The status response will contain alarm codes like <Alarm:9|MPos:...>
+        self.send_command("?")
+    }
 }
 
 // Implement Drop to ensure proper cleanup when CncManager is dropped

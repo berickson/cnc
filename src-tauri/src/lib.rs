@@ -77,6 +77,12 @@ fn set_cnc_work_zero(axes: String, state: tauri::State<AppState>) -> Result<Stri
     manager.set_work_zero(&axes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn check_cnc_alarm_status(state: tauri::State<AppState>) -> Result<String, String> {
+    let mut manager = state.cnc_manager.lock().map_err(|e| e.to_string())?;
+    manager.check_alarm_status().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -99,7 +105,8 @@ pub fn run() {
             get_cnc_status,
             home_cnc,
             reset_cnc,
-            set_cnc_work_zero
+            set_cnc_work_zero,
+            check_cnc_alarm_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

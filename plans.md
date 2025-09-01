@@ -11,9 +11,11 @@ cnc-panel is in the beginning phase of porting into Tauri the following need to 
 [x] When connecting, should connect after the first proper multicast message received (currently waiting for several) 
 [x] save xy button not working
 [X] ELIFECYCLE  Command failed in console when closing app
-[ ] Shouldn't allow jogging past the machine limits
+[ ] Shouldn't allow jogging past the machine limits (maybe not needed if we honor limit switches)
+[ ] Home operation shows State "idle" while homing
 [ ] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
 [ ] Need robust button disabling
+
 [ ] **Coordinate confidence system** - Visual indicators for coordinate reliability
   - [ ] Machine coordinates: Show with warning styling when unhomed (orange/yellow background)
   - [ ] Work coordinates: Hide completely until work zero is set in current session
