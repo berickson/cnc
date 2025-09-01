@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::net::{TcpStream, UdpSocket};
+use std::net::{TcpStream, UdpSocket, Ipv4Addr};
 use std::time::Duration;
 use std::io::{Read, Write};
 
@@ -23,10 +23,9 @@ pub struct CncConnection {
 #[derive(Debug, Deserialize)]
 struct GenmitsuBroadcast {
     ip: String,
-    port: u16,
+    port: String,  // Port comes as string from device
     name: String,
-    #[serde(default)]
-    mac: Option<String>,
+    uuid: String,  // MAC address in uuid field
 }
 
 pub struct CncManager {
@@ -42,17 +41,30 @@ impl CncManager {
         }
     }
 
-    /// Discover CNC devices - now uses direct TCP connection instead of UDP broadcast
+    /// Discover CNC devices - now uses proper multicast discovery
     pub fn discover_devices(&self, timeout_ms: u64) -> Result<Vec<CncDevice>> {
         let mut devices = Vec::new();
         
-        // Known Genmitsu device IP and port (bypasses Google WiFi UDP broadcast issues)
+        // First try multicast discovery (the correct method!)
+        println!("� Attempting multicast discovery on 224.0.0.251:1234...");
+        match self.multicast_discovery(timeout_ms) {
+            Ok(mut multicast_devices) => {
+                if !multicast_devices.is_empty() {
+                    println!("✅ Found {} device(s) via multicast", multicast_devices.len());
+                    devices.append(&mut multicast_devices);
+                    return Ok(devices);
+                }
+            }
+            Err(e) => {
+                println!("⚠️  Multicast discovery failed: {}", e);
+            }
+        }
+        
+        // Fallback: Direct TCP connection to known IP
+        println!("🔄 Falling back to direct TCP connection...");
         let cnc_ip = "192.168.86.23";
         let cnc_port = 10086;
         
-        println!("🔌 Attempting direct TCP connection to {}:{}...", cnc_ip, cnc_port);
-        
-        // Try to connect directly
         match self.probe_device(cnc_ip, cnc_port) {
             Ok(mut device) => {
                 println!("✅ Found CNC device via direct connection!");
@@ -60,49 +72,49 @@ impl CncManager {
                 devices.push(device);
             }
             Err(e) => {
-                println!("❌ Direct connection failed: {}", e);
-                
-                // Fallback: try UDP discovery for other devices
-                println!("🔄 Falling back to UDP discovery...");
-                match self.udp_discovery_fallback(timeout_ms) {
-                    Ok(mut udp_devices) => {
-                        devices.append(&mut udp_devices);
-                    }
-                    Err(e) => {
-                        println!("❌ UDP discovery also failed: {}", e);
-                    }
-                }
+                println!("❌ Direct connection also failed: {}", e);
             }
         }
         
         Ok(devices)
     }
     
-    /// Fallback UDP discovery method
-    fn udp_discovery_fallback(&self, timeout_ms: u64) -> Result<Vec<CncDevice>> {
-        let local_ip = self.get_local_ip_address()?;
-        let bind_addr = format!("{}:1234", local_ip);
+    /// Multicast discovery using mDNS multicast group 224.0.0.251
+    fn multicast_discovery(&self, timeout_ms: u64) -> Result<Vec<CncDevice>> {
+        let mut devices = Vec::new();
         
-        println!("📡 UDP fallback: Binding to {} for broadcast reception...", bind_addr);
-        let socket = UdpSocket::bind(&bind_addr)?;
+        // Create UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:1234")?;
         socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
         
-        let mut devices = Vec::new();
-        let mut buf = [0; 1024];
+        // Join multicast group 224.0.0.251 (mDNS)
+        let multicast_addr = Ipv4Addr::new(224, 0, 0, 251);
+        let interface_addr = Ipv4Addr::UNSPECIFIED;
+        socket.join_multicast_v4(&multicast_addr, &interface_addr)?;
+        
+        println!("📡 Joined multicast group 224.0.0.251, listening for CNC devices...");
         
         let start_time = std::time::Instant::now();
+        let mut buf = [0; 1024];
+        
         while start_time.elapsed() < Duration::from_millis(timeout_ms) {
             match socket.recv_from(&mut buf) {
                 Ok((size, addr)) => {
                     let data = &buf[..size];
                     match std::str::from_utf8(data) {
                         Ok(json_str) => {
-                            println!("📡 Received broadcast from {}: {}", addr, json_str);
+                            println!("� Received multicast from {}: {}", addr, json_str);
                             match serde_json::from_str::<GenmitsuBroadcast>(json_str) {
                                 Ok(broadcast) => {
-                                    if let Ok(mut device) = self.probe_device(&broadcast.ip, broadcast.port) {
+                                    println!("🎯 Parsed Genmitsu device: {}", broadcast.name);
+                                    
+                                    // Convert port string to u16
+                                    let port = broadcast.port.parse::<u16>().unwrap_or(10086);
+                                    
+                                    // Probe the device to verify it's actually a CNC
+                                    if let Ok(mut device) = self.probe_device(&broadcast.ip, port) {
                                         device.name = broadcast.name;
-                                        device.mac = broadcast.mac;
+                                        device.mac = Some(broadcast.uuid);
                                         devices.push(device);
                                     }
                                 }
@@ -120,9 +132,13 @@ impl CncManager {
                     if e.kind() == std::io::ErrorKind::TimedOut {
                         break;
                     }
+                    println!("Multicast receive error: {}", e);
                 }
             }
         }
+        
+        // Leave multicast group
+        socket.leave_multicast_v4(&multicast_addr, &interface_addr)?;
         
         Ok(devices)
     }
@@ -133,63 +149,6 @@ impl CncManager {
         socket.connect("8.8.8.8:80")?;
         let local_addr = socket.local_addr()?;
         Ok(local_addr.ip().to_string())
-    }    /// Listen for broadcasts on a specific port
-    fn listen_for_broadcasts(&self, port: u16, timeout_ms: u64) -> Result<Vec<CncDevice>> {
-        let mut devices = Vec::new();
-        
-        // Create UDP socket to listen for broadcasts
-        let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))?;
-        socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
-        
-        // Listen for broadcasts within timeout period
-        let start_time = std::time::Instant::now();
-        while start_time.elapsed() < Duration::from_millis(timeout_ms) {
-            let mut buf = [0; 1024];
-            match socket.recv_from(&mut buf) {
-                Ok((size, addr)) => {
-                    let data = &buf[..size];
-                    match String::from_utf8(data.to_vec()) {
-                        Ok(json_str) => {
-                            match serde_json::from_str::<GenmitsuBroadcast>(&json_str) {
-                                Ok(broadcast) => {
-                                    println!("Received broadcast from {} on port {}: {}", addr, port, json_str);
-                                    
-                                    // Probe the device to verify it's a CNC and get firmware info
-                                    match self.probe_device(&broadcast.ip, broadcast.port) {
-                                        Ok(mut device) => {
-                                            // Update with broadcast information
-                                            device.name = broadcast.name;
-                                            device.mac = broadcast.mac;
-                                            devices.push(device);
-                                        }
-                                        Err(e) => {
-                                            println!("Device at {}:{} didn't respond as CNC: {}", 
-                                                   broadcast.ip, broadcast.port, e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    println!("Failed to parse JSON broadcast on port {}: {} ({})", port, e, json_str);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("Received non-UTF8 data from {} on port {}: {}", addr, port, e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if e.kind() == std::io::ErrorKind::TimedOut {
-                        break; // Timeout reached for this port
-                    } else {
-                        println!("UDP receive error on port {}: {}", port, e);
-                        break;
-                    }
-                }
-            }
-        }
-        
-        Ok(devices)
     }
 
     /// Probe a specific IP and port to see if it's a CNC device
