@@ -87,6 +87,59 @@ function logMessage(message: string, type: 'info' | 'error' | 'success' = 'info'
   communicationLog.scrollTop = communicationLog.scrollHeight;
 }
 
+// Connection state persistence
+const CONNECTION_STORAGE_KEY = 'cnc_last_connection';
+
+interface SavedConnection {
+  device: CncDevice;
+  timestamp: string;
+}
+
+function saveLastConnection(device: CncDevice) {
+  const savedConnection: SavedConnection = {
+    device,
+    timestamp: new Date().toISOString()
+  };
+  localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(savedConnection));
+  logMessage(`Saved connection settings for ${device.name}`, 'info');
+}
+
+function loadLastConnection(): CncDevice | null {
+  try {
+    const saved = localStorage.getItem(CONNECTION_STORAGE_KEY);
+    if (!saved) return null;
+    
+    const savedConnection: SavedConnection = JSON.parse(saved);
+    return savedConnection.device;
+  } catch (error) {
+    console.error('Failed to load last connection:', error);
+    return null;
+  }
+}
+
+function clearLastConnection() {
+  localStorage.removeItem(CONNECTION_STORAGE_KEY);
+}
+
+// Auto-reconnect to last connected device
+async function attemptAutoReconnect(): Promise<boolean> {
+  const lastConnection = loadLastConnection();
+  if (lastConnection) {
+    logMessage(`Attempting to reconnect to ${lastConnection.name} at ${lastConnection.ip}:${lastConnection.port}`, 'info');
+    try {
+      await CncManager.connect(lastConnection);
+      updateConnectionStatus(true, lastConnection);
+      logMessage('Auto-reconnect successful', 'success');
+      return true;
+    } catch (error) {
+      logMessage(`Auto-reconnect failed: ${error}`, 'error');
+      // Keep the saved connection for future attempts - user can use discovery if needed
+      return false;
+    }
+  }
+  return false;
+}
+
 function updateConnectionStatus(connected: boolean, deviceInfo?: CncDevice) {
   isConnected = connected;
   
@@ -141,6 +194,7 @@ async function discoverAndConnect() {
     
     await CncManager.connect(device);
     updateConnectionStatus(true, device);
+    saveLastConnection(device); // Save successful connection
     logMessage(`Successfully connected to ${device.name}`, 'success');
     
     // Check for alarm status immediately after connecting
@@ -169,6 +223,7 @@ async function discoverAndConnect() {
   } catch (error) {
     logMessage(`Connection failed: ${error}`, 'error');
     updateConnectionStatus(false);
+    // Don't clear saved connection on discovery/connect failure - might be temporary
   } finally {
     connectButton!.textContent = "Connect";
     connectButton!.disabled = false;
@@ -180,6 +235,7 @@ async function disconnect() {
     await CncManager.disconnect();
     updateConnectionStatus(false);
     lastWorkOffset = { x: 0, y: 0, z: 0 }; // Reset work offset
+    clearLastConnection(); // Clear saved connection on manual disconnect
     logMessage("Disconnected from CNC", 'success');
   } catch (error) {
     logMessage(`Disconnect error: ${error}`, 'error');
@@ -367,41 +423,52 @@ function saveXyCoordinates() {
   }
 }
 
-// Save current XY position as a preset
+// Save current XY position as a preset (using machine coordinates)
 async function saveCurrentXyPosition(name?: string) {
   if (!isConnected) {
     logMessage('Not connected to CNC', 'error');
     return;
   }
 
-  // Auto-generate name if not provided
-  if (!name) {
-    const existingPresets = Object.keys(savedXyCoordinates);
-    let presetNumber = 1;
-    let generatedName;
+  // Get current machine status to get accurate machine coordinates
+  try {
+    const status = await CncManager.getStatus();
+    const parsed = CncManager.parseStatus(status, lastWorkOffset);
     
-    // Find the next available preset number
-    do {
-      generatedName = `Preset ${presetNumber}`;
-      presetNumber++;
-    } while (existingPresets.includes(generatedName));
+    if (!parsed) {
+      logMessage('Could not get current position', 'error');
+      return;
+    }
+
+    // Auto-generate name if not provided
+    if (!name) {
+      const existingPresets = Object.keys(savedXyCoordinates);
+      let presetNumber = 1;
+      let generatedName;
+      
+      // Find the next available preset number
+      do {
+        generatedName = `Preset ${presetNumber}`;
+        presetNumber++;
+      } while (existingPresets.includes(generatedName));
+      
+      name = generatedName;
+    }
+
+    // Save machine coordinates (absolute positions for fixtures/vises/tooling)
+    savedXyCoordinates[name] = {
+      x: parsed.position.x,  // Machine coordinates
+      y: parsed.position.y,  // Machine coordinates
+      timestamp: new Date().toISOString()
+    };
+
+    saveXyCoordinates();
+    logMessage(`Saved machine XY position "${name}": X${parsed.position.x.toFixed(3)} Y${parsed.position.y.toFixed(3)}`, 'success');
+    updateXyPresetsUi();
     
-    name = generatedName;
+  } catch (error) {
+    logMessage(`Failed to save XY position: ${error}`, 'error');
   }
-
-  // Get current work XY position from the display elements
-  const xPos = workXPos ? parseFloat(workXPos.textContent || '0') : 0;
-  const yPos = workYPos ? parseFloat(workYPos.textContent || '0') : 0;
-
-  savedXyCoordinates[name] = {
-    x: xPos,
-    y: yPos,
-    timestamp: new Date().toISOString()
-  };
-
-  saveXyCoordinates();
-  logMessage(`Saved work XY position "${name}": X${xPos.toFixed(3)} Y${yPos.toFixed(3)}`, 'success');
-  updateXyPresetsUi();
 }
 
 // Go to a saved XY position
@@ -418,9 +485,9 @@ async function gotoSavedXyPosition(name: string) {
   }
 
   try {
-    // Move to the saved work coordinates (using G0 rapid positioning)
-    const response = await CncManager.sendCommand(`G0X${coords.x}Y${coords.y}`);
-    logMessage(`Moving to "${name}": X${coords.x} Y${coords.y} - ${response.trim()}`, 'success');
+    // Move to the saved machine coordinates using G53 (machine coordinate system)
+    const response = await CncManager.sendCommand(`G53 G0 X${coords.x} Y${coords.y}`);
+    logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${response.trim()}`, 'success');
   } catch (error) {
     logMessage(`Failed to move to "${name}": ${error}`, 'error');
   }
@@ -730,4 +797,12 @@ window.addEventListener("DOMContentLoaded", () => {
   }, 100); // Update every 100ms (10 times per second)
   
   logMessage("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
+  
+  // Attempt auto-reconnect after a short delay to let the UI finish loading
+  setTimeout(async () => {
+    const reconnected = await attemptAutoReconnect();
+    if (!reconnected) {
+      logMessage("Ready for manual connection.", 'info');
+    }
+  }, 1000); // 1 second delay
 });

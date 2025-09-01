@@ -1,7 +1,11 @@
 
 
-## Port
-cnc-panel is in the beginning phase of porting into Tauri the following need to be done
+## Port[x] Coordinates need to update from machine status
+[x] When connecting, should connect after the first proper multicast message received (currently waiting for several) 
+[x] save xy button not working
+[X] ELIFECYCLE  Command failed in console when closing app
+[x] **Alarm code display** - Show specific alarm codes and descriptions instead of just "Alarm"
+[ ] Shouldn't allow jogging past the machine limits (maybe not needed if we honor limit switches)panel is in the beginning phase of porting into Tauri the following need to be done
 
 [x] fix up assets so robonerd icon is the app icon, remove sample icons
 [x] Replace web-serial
@@ -11,6 +15,7 @@ cnc-panel is in the beginning phase of porting into Tauri the following need to 
 [x] When connecting, should connect after the first proper multicast message received (currently waiting for several) 
 [x] save xy button not working
 [X] ELIFECYCLE  Command failed in console when closing app
+[x] **Auto-reconnect to last connected CNC** - Remembers last successful connection and attempts reconnect on startup
 [ ] Shouldn't allow jogging past the machine limits (maybe not needed if we honor limit switches)
 [ ] Home operation shows State "idle" while homing
 [ ] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
