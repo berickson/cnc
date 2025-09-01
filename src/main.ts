@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { CncManager, CncDevice } from "./cnc-manager";
 
 // Global clipboard function for use by cnc-serial.js
 (window as any).tauriCopyToClipboard = async (text: string): Promise<void> => {
   try {
-    await invoke('copy_to_clipboard', { text });
+    await writeText(text);
   } catch (error) {
     // Fall back to browser clipboard API
     if (navigator.clipboard && navigator.clipboard.writeText) {

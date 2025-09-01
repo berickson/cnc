@@ -1,5 +1,5 @@
 # CNC P[x] Use wifi serial connection to genmitsu instead of web-serial
-[x] Copy button should copy to clipboard, removed test button after confirming functionality works
+[x] Copy button now uses standard Tauri clipboard plugin with proper permissions (completed)
 [ ] Optionally use real serial with tauri rust packagesl Development Plans
 
 ## Port

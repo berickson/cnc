@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::net::{TcpStream, UdpSocket, Ipv4Addr};
-use std::time::Duration;
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, TcpStream, UdpSocket};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CncDevice {
@@ -23,9 +23,9 @@ pub struct CncConnection {
 #[derive(Debug, Deserialize)]
 struct GenmitsuBroadcast {
     ip: String,
-    port: String,  // Port comes as string from device
+    port: String, // Port comes as string from device
     name: String,
-    uuid: String,  // MAC address in uuid field
+    uuid: String, // MAC address in uuid field
 }
 
 pub struct CncManager {
@@ -44,13 +44,16 @@ impl CncManager {
     /// Discover CNC devices - now uses proper multicast discovery
     pub fn discover_devices(&self, timeout_ms: u64) -> Result<Vec<CncDevice>> {
         let mut devices = Vec::new();
-        
+
         // First try multicast discovery (the correct method!)
         println!("� Attempting multicast discovery on 224.0.0.251:1234...");
         match self.multicast_discovery(timeout_ms) {
             Ok(mut multicast_devices) => {
                 if !multicast_devices.is_empty() {
-                    println!("✅ Found {} device(s) via multicast", multicast_devices.len());
+                    println!(
+                        "✅ Found {} device(s) via multicast",
+                        multicast_devices.len()
+                    );
                     devices.append(&mut multicast_devices);
                     return Ok(devices);
                 }
@@ -59,12 +62,12 @@ impl CncManager {
                 println!("⚠️  Multicast discovery failed: {}", e);
             }
         }
-        
+
         // Fallback: Direct TCP connection to known IP
         println!("🔄 Falling back to direct TCP connection...");
         let cnc_ip = "192.168.86.23";
         let cnc_port = 10086;
-        
+
         match self.probe_device(cnc_ip, cnc_port) {
             Ok(mut device) => {
                 println!("✅ Found CNC device via direct connection!");
@@ -75,28 +78,28 @@ impl CncManager {
                 println!("❌ Direct connection also failed: {}", e);
             }
         }
-        
+
         Ok(devices)
     }
-    
+
     /// Multicast discovery using mDNS multicast group 224.0.0.251
     fn multicast_discovery(&self, timeout_ms: u64) -> Result<Vec<CncDevice>> {
         let mut devices = Vec::new();
-        
+
         // Create UDP socket
         let socket = UdpSocket::bind("0.0.0.0:1234")?;
         socket.set_read_timeout(Some(Duration::from_millis(timeout_ms)))?;
-        
+
         // Join multicast group 224.0.0.251 (mDNS)
         let multicast_addr = Ipv4Addr::new(224, 0, 0, 251);
         let interface_addr = Ipv4Addr::UNSPECIFIED;
         socket.join_multicast_v4(&multicast_addr, &interface_addr)?;
-        
+
         println!("📡 Joined multicast group 224.0.0.251, listening for CNC devices...");
-        
+
         let start_time = std::time::Instant::now();
         let mut buf = [0; 1024];
-        
+
         while start_time.elapsed() < Duration::from_millis(timeout_ms) {
             match socket.recv_from(&mut buf) {
                 Ok((size, addr)) => {
@@ -107,10 +110,10 @@ impl CncManager {
                             match serde_json::from_str::<GenmitsuBroadcast>(json_str) {
                                 Ok(broadcast) => {
                                     println!("🎯 Parsed Genmitsu device: {}", broadcast.name);
-                                    
+
                                     // Convert port string to u16
                                     let port = broadcast.port.parse::<u16>().unwrap_or(10086);
-                                    
+
                                     // Probe the device to verify it's actually a CNC
                                     if let Ok(mut device) = self.probe_device(&broadcast.ip, port) {
                                         device.name = broadcast.name;
@@ -136,60 +139,52 @@ impl CncManager {
                 }
             }
         }
-        
+
         // Leave multicast group
         socket.leave_multicast_v4(&multicast_addr, &interface_addr)?;
-        
-        Ok(devices)
-    }
 
-    fn get_local_ip_address(&self) -> Result<String> {
-        // Try to get the local IP by connecting to a dummy address
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        socket.connect("8.8.8.8:80")?;
-        let local_addr = socket.local_addr()?;
-        Ok(local_addr.ip().to_string())
+        Ok(devices)
     }
 
     /// Probe a specific IP and port to see if it's a CNC device
     fn probe_device(&self, ip: &str, port: u16) -> Result<CncDevice> {
         let addr = format!("{}:{}", ip, port);
-        
+
         // Try to connect with a short timeout
-        match TcpStream::connect_timeout(
-            &addr.parse()?,
-            Duration::from_millis(2000)
-        ) {
+        match TcpStream::connect_timeout(&addr.parse()?, Duration::from_millis(2000)) {
             Ok(mut stream) => {
                 stream.set_read_timeout(Some(Duration::from_millis(2000)))?;
                 stream.set_write_timeout(Some(Duration::from_millis(1000)))?;
 
                 // Send Grbl status query
                 let _ = stream.write_all(b"?\n");
-                
+
                 let mut buffer = [0; 512];
                 let mut response = String::new();
-                
+
                 if let Ok(size) = stream.read(&mut buffer) {
                     response = String::from_utf8_lossy(&buffer[..size]).to_string();
                 }
 
                 // Check if response looks like Grbl
-                if response.contains("Idle") || response.contains("Alarm") || 
-                   response.contains("Run") || response.contains("MPos") ||
-                   response.contains("VER:") {
-                    
+                if response.contains("Idle")
+                    || response.contains("Alarm")
+                    || response.contains("Run")
+                    || response.contains("MPos")
+                    || response.contains("VER:")
+                {
                     // Extract firmware version if available
                     let mut firmware = None;
                     if response.contains("VER:") {
                         // Try to get version info
                         let _ = stream.write_all(b"$I\n");
                         if let Ok(size) = stream.read(&mut buffer) {
-                            let version_response = String::from_utf8_lossy(&buffer[..size]).to_string();
+                            let version_response =
+                                String::from_utf8_lossy(&buffer[..size]).to_string();
                             firmware = self.extract_firmware_info(&version_response);
                         }
                     }
-                    
+
                     Ok(CncDevice {
                         name: format!("CNC at {}", ip),
                         ip: ip.to_string(),
@@ -198,10 +193,13 @@ impl CncManager {
                         firmware,
                     })
                 } else {
-                    Err(anyhow!("Not a CNC device - unexpected response: {}", response))
+                    Err(anyhow!(
+                        "Not a CNC device - unexpected response: {}",
+                        response
+                    ))
                 }
             }
-            Err(e) => Err(anyhow!("Connection failed: {}", e))
+            Err(e) => Err(anyhow!("Connection failed: {}", e)),
         }
     }
 
@@ -218,11 +216,8 @@ impl CncManager {
     /// Connect to a specific CNC device
     pub fn connect(&mut self, device: &CncDevice) -> Result<()> {
         let addr = format!("{}:{}", device.ip, device.port);
-        let stream = TcpStream::connect_timeout(
-            &addr.parse()?,
-            Duration::from_millis(5000)
-        )?;
-        
+        let stream = TcpStream::connect_timeout(&addr.parse()?, Duration::from_millis(5000))?;
+
         // Set timeouts
         stream.set_read_timeout(Some(Duration::from_millis(5000)))?;
         stream.set_write_timeout(Some(Duration::from_millis(1000)))?;
@@ -241,26 +236,14 @@ impl CncManager {
         if let Some(ref mut stream) = self.current_connection {
             let cmd_with_newline = format!("{}\n", command);
             stream.write_all(cmd_with_newline.as_bytes())?;
-            
+
             let mut buffer = [0; 1024];
             let size = stream.read(&mut buffer)?;
             let response = String::from_utf8_lossy(&buffer[..size]).to_string();
-            
+
             Ok(response.trim().to_string())
         } else {
             Err(anyhow!("Not connected to any device"))
-        }
-    }
-
-    /// Get current connection status
-    pub fn get_connection_status(&self) -> Option<CncConnection> {
-        if let Some(ref device) = self.device_info {
-            Some(CncConnection {
-                device: device.clone(),
-                connected: self.current_connection.is_some(),
-            })
-        } else {
-            None
         }
     }
 
