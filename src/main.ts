@@ -152,15 +152,12 @@ async function updateMachineStatus() {
   
   try {
     const status = await CncManager.getStatus();
-    logMessage(`DEBUG: Raw status response: "${status}"`);
     const parsed = CncManager.parseStatus(status, lastWorkOffset);
-    logMessage(`DEBUG: Parsed status: ${parsed ? JSON.stringify(parsed) : 'null'}`);
     
     if (parsed) {
       // Update stored work offset if this status contains WCO
       if ((parsed as any).workOffset) {
         lastWorkOffset = (parsed as any).workOffset;
-        logMessage(`DEBUG: Updated work offset: ${JSON.stringify(lastWorkOffset)}`);
       }
       
       // Update machine state
@@ -177,10 +174,6 @@ async function updateMachineStatus() {
       if (workXPos) workXPos.textContent = parsed.workPosition.x.toFixed(3);
       if (workYPos) workYPos.textContent = parsed.workPosition.y.toFixed(3);
       if (workZPos) workZPos.textContent = parsed.workPosition.z.toFixed(3);
-      
-      logMessage(`DEBUG: Updated coordinates - Machine: ${parsed.position.x},${parsed.position.y},${parsed.position.z} Work: ${parsed.workPosition.x},${parsed.workPosition.y},${parsed.workPosition.z}`);
-    } else {
-      logMessage(`DEBUG: Failed to parse status response: "${status}"`);
     }
     
   } catch (error) {
