@@ -68,6 +68,11 @@ class CNCSerial {
     this.go_work_zero_button = document.getElementById('go_work_zero_button');
     this.go_machine_zero_button = document.getElementById('go_machine_zero_button');
     
+    // Debug: Check if buttons were found
+    this.log('DEBUG: Button initialization:');
+    this.log('  go_work_zero_button found: ' + (this.go_work_zero_button !== null));
+    this.log('  go_machine_zero_button found: ' + (this.go_machine_zero_button !== null));
+    
     // Enhanced position elements
     this.machine_x_position = document.getElementById('machine_x_position');
     this.machine_y_position = document.getElementById('machine_y_position');
@@ -181,8 +186,14 @@ class CNCSerial {
     this.zero_y_button.addEventListener('click', () => this.zero_axis('Y'));
     this.zero_z_button.addEventListener('click', () => this.zero_axis('Z'));
     this.zero_xy_button.addEventListener('click', () => this.zero_xy());
-    this.go_work_zero_button.addEventListener('click', () => this.go_work_zero());
-    this.go_machine_zero_button.addEventListener('click', () => this.go_machine_zero());
+    this.go_work_zero_button.addEventListener('click', () => {
+      this.log('DEBUG: Go Work Zero button clicked!');
+      this.go_work_zero();
+    });
+    this.go_machine_zero_button.addEventListener('click', () => {
+      this.log('DEBUG: Go Machine Zero button clicked!');
+      this.go_machine_zero();
+    });
     
     // Work coordinate management events
     if (this.save_xy_preset_button) {
@@ -1317,6 +1328,7 @@ class CNCSerial {
   }
   
   async go_work_zero() {
+    this.log('DEBUG: go_work_zero function called, connected: ' + this.is_connected);
     if (!this.is_connected) {
       this.show_error('Not connected to CNC');
       return;
@@ -1324,9 +1336,11 @@ class CNCSerial {
     
     this.log('Moving to work coordinate X0 Y0 (preserving Z)...');
     await this.send_command('G0 X0 Y0');
+    this.log('Go work zero command sent');
   }
   
   async go_machine_zero() {
+    this.log('DEBUG: go_machine_zero function called, connected: ' + this.is_connected);
     if (!this.is_connected) {
       this.show_error('Not connected to CNC');
       return;
@@ -1334,6 +1348,7 @@ class CNCSerial {
     
     this.log('Moving to machine coordinate X0 Y0 (preserving Z)...');
     await this.send_command('G53 G0 X0 Y0');
+    this.log('Go machine zero command sent');
   }
   
   log(message) {

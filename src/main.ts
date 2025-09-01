@@ -221,6 +221,30 @@ async function setWorkZero(axes: string) {
   }
 }
 
+async function goToWorkZero() {
+  if (!isConnected) return;
+  
+  try {
+    logMessage("Moving to work coordinate X0 Y0 (preserving Z)...");
+    const response = await CncManager.sendCommand("G0 X0 Y0");
+    logMessage(`Go work zero: ${response.trim()}`, 'success');
+  } catch (error) {
+    logMessage(`Go work zero failed: ${error}`, 'error');
+  }
+}
+
+async function goToMachineZero() {
+  if (!isConnected) return;
+  
+  try {
+    logMessage("Moving to machine coordinate X0 Y0 (preserving Z)...");
+    const response = await CncManager.sendCommand("G53 G0 X0 Y0");
+    logMessage(`Go machine zero: ${response.trim()}`, 'success');
+  } catch (error) {
+    logMessage(`Go machine zero failed: ${error}`, 'error');
+  }
+}
+
 function setupStepSizeButtons() {
   const stepButtons = [
     { id: 'step_01_button', value: 0.1 },
@@ -298,6 +322,8 @@ window.addEventListener("DOMContentLoaded", () => {
     'y': document.getElementById("zero_y_button") as HTMLButtonElement,
     'z': document.getElementById("zero_z_button") as HTMLButtonElement,
     'xy': document.getElementById("zero_xy_button") as HTMLButtonElement,
+    'go_work_zero': document.getElementById("go_work_zero_button") as HTMLButtonElement,
+    'go_machine_zero': document.getElementById("go_machine_zero_button") as HTMLButtonElement,
   };
   
   // Event listeners
@@ -339,6 +365,8 @@ window.addEventListener("DOMContentLoaded", () => {
   if (zeroButtons.y) zeroButtons.y.addEventListener("click", () => setWorkZero("Y0"));
   if (zeroButtons.z) zeroButtons.z.addEventListener("click", () => setWorkZero("Z0"));
   if (zeroButtons.xy) zeroButtons.xy.addEventListener("click", () => setWorkZero("X0Y0"));
+  if (zeroButtons.go_work_zero) zeroButtons.go_work_zero.addEventListener("click", goToWorkZero);
+  if (zeroButtons.go_machine_zero) zeroButtons.go_machine_zero.addEventListener("click", goToMachineZero);
   
   // Setup step size buttons
   setupStepSizeButtons();

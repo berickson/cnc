@@ -1,6 +1,4 @@
-# CNC P[x] Use wifi serial connection to genmitsu instead of web-serial
-[x] Copy button now uses standard Tauri clipboard plugin with proper permissions (completed)
-[ ] Optionally use real serial with tauri rust packagesl Development Plans
+
 
 ## Port
 cnc-panel is in the beginning phase of porting into Tauri the following need to be done
@@ -9,7 +7,41 @@ cnc-panel is in the beginning phase of porting into Tauri the following need to 
 [x] Replace web-serial
 - [x] Use wifi serial connection to genmitsu instead of web-serial
 - [x] Copy button should copy to clipboard, but stopped working when we moved to Tauri
-- [ ] Optionally use real serial with tauri rust packages
+[x] Coordinates need to update from machine status
+[x] When connecting, should connect after the first proper muliticast message received (currently waiting for several) 
+
+### Buttons needing backend connection
+- [x] Connect button - working (multicast discovery + TCP connection)
+- [x] Disconnect button - working 
+- [x] Status button - working
+- [x] Clear Alarm button - working
+- [x] Show/Hide Log button - working (frontend only)
+- [x] Copy button - working (clipboard functionality)
+- [x] Home button - working
+- [x] All step size buttons (0.1, 1, 10) - working (frontend only)
+- [x] All jog buttons (X+/-, Y+/-, Z+/-) - working
+- [x] All zero buttons (All 0, X0, Y0, Z0, X0Y0) - working
+- [x] Go X0Y0 button - **FIXED** (added to Tauri system in main.ts)
+- [x] Go Machine X0Y0 button - **FIXED** (added to Tauri system in main.ts)
+- [x] Save Current XY Position button - working
+- [x] XY preset buttons (dynamically created) - working
+- [x] Probe Z button - working
+- [x] Tool Change button - working
+- [x] Fullscreen toggle button - working (frontend only)
+
+**Issue resolved**: Go X0Y0 and Go Machine X0Y0 buttons were calling old cnc-serial.js functions that used Web Serial API (not available in Tauri). Added proper implementations to the Tauri system in main.ts that use the working CNC connection.
+
+All buttons are now connected to backend functionality!
+
+### Legacy Code Cleanup
+[ ] **Remove obsolete Web Serial API code** - The cnc-serial.js file contains legacy Web Serial API code that doesn't work in Tauri. This should be cleaned up:
+  - [ ] Remove cnc-serial.js file entirely
+  - [ ] Remove Web Serial API references from index.html
+  - [ ] Move any remaining useful functionality (like XY presets, tool change workflow) to the Tauri system in main.ts
+  - [ ] Ensure all button event listeners are properly handled by the Tauri system
+  - [ ] Clean up duplicate/conflicting code between old and new systems 
+
+
 ## Next Development Priorities
 [x] UI should target 7" 1024×600 touch, no keyboard, no mouse
 [x] Support kiosk mode, powers on with CNC
