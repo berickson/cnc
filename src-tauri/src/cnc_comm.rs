@@ -265,3 +265,19 @@ impl CncManager {
         self.send_command(&command)
     }
 }
+
+// Implement Drop to ensure proper cleanup when CncManager is dropped
+impl Drop for CncManager {
+    fn drop(&mut self) {
+        if self.current_connection.is_some() {
+            println!("🔌 Cleaning up CNC connection on drop");
+            // Use a more thorough disconnect that ensures TCP stream is properly closed
+            if let Some(stream) = self.current_connection.take() {
+                // Explicitly drop the stream to ensure it's closed
+                drop(stream);
+            }
+            self.device_info = None;
+            println!("✅ CNC connection cleanup completed");
+        }
+    }
+}

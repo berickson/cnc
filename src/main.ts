@@ -22,7 +22,6 @@ let greetMsgEl: HTMLElement | null;
 // CNC-related elements
 let connectButton: HTMLButtonElement | null;
 let disconnectButton: HTMLButtonElement | null;
-let statusButton: HTMLButtonElement | null;
 let statusIndicator: HTMLElement | null;
 let statusText: HTMLElement | null;
 let machineState: HTMLElement | null;
@@ -91,7 +90,6 @@ function updateConnectionStatus(connected: boolean, deviceInfo?: CncDevice) {
   // Update button states
   if (connectButton) connectButton.disabled = connected;
   if (disconnectButton) disconnectButton.disabled = !connected;
-  if (statusButton) statusButton.disabled = !connected;
   if (clearAlarmButton) clearAlarmButton.disabled = !connected;
   if (homeButton) homeButton.disabled = !connected;
   if (saveXyPresetButton) saveXyPresetButton.disabled = !connected;
@@ -473,7 +471,6 @@ window.addEventListener("DOMContentLoaded", () => {
   // CNC UI elements
   connectButton = document.getElementById("connect_button") as HTMLButtonElement;
   disconnectButton = document.getElementById("disconnect_button") as HTMLButtonElement;
-  statusButton = document.getElementById("status_button") as HTMLButtonElement;
   statusIndicator = document.getElementById("status_indicator");
   statusText = document.getElementById("status_text");
   machineState = document.getElementById("machine_state");
@@ -526,10 +523,6 @@ window.addEventListener("DOMContentLoaded", () => {
   
   if (disconnectButton) {
     disconnectButton.addEventListener("click", disconnect);
-  }
-  
-  if (statusButton) {
-    statusButton.addEventListener("click", updateMachineStatus);
   }
   
   if (homeButton) {
@@ -590,7 +583,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (isConnected) {
       updateMachineStatus();
     }
-  }, 2000); // Update every 2 seconds
+  }, 100); // Update every 100ms (10 times per second)
   
   logMessage("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
 });

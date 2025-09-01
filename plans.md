@@ -10,10 +10,17 @@ cnc-panel is in the beginning phase of porting into Tauri the following need to 
 [x] Coordinates need to update from machine status
 [x] When connecting, should connect after the first proper multicast message received (currently waiting for several) 
 [x] save xy button not working
+[X] ELIFECYCLE  Command failed in console when closing app
 [ ] Shouldn't allow jogging past the machine limits
 [ ] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
 [ ] Need robust button disabling
-[ ] discuss: Don't show information that you don't know, for example, work positions should probably not show until zeroed, machine positions are suspicious until you've zeroed
+[ ] **Coordinate confidence system** - Visual indicators for coordinate reliability
+  - [ ] Machine coordinates: Show with warning styling when unhomed (orange/yellow background)
+  - [ ] Work coordinates: Hide completely until work zero is set in current session
+  - [ ] Preset safety: Show warning dialogs for "Go To" when machine unhomed ("Position may be inaccurate - Continue?")
+  - [ ] Session-only presets: Allow saving presets when unhomed but mark as temporary/non-persistent
+  - [ ] Prominent "HOME MACHINE FIRST" banner when coordinates are unreliable
+  - [ ] Visual feedback: Green=trusted, Yellow=caution, Red=unsafe, Hidden=unknown
 [ ] Hide log should be closer to log, should also have clear log buttton
 
 
