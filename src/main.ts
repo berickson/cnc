@@ -45,9 +45,14 @@ let jogButtons: { [key: string]: HTMLButtonElement | null } = {};
 let stepSizeInput: HTMLInputElement | null;
 let zeroButtons: { [key: string]: HTMLButtonElement | null } = {};
 
+// Save XY preset elements
+let saveXyPresetButton: HTMLButtonElement | null;
+let xyPresetsList: HTMLElement | null;
+
 let isConnected = false;
 let discoveredDevices: CncDevice[] = [];
 let lastWorkOffset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
+let savedXyCoordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
 
 async function greet() {
   if (greetMsgEl && greetInputEl) {
@@ -89,6 +94,7 @@ function updateConnectionStatus(connected: boolean, deviceInfo?: CncDevice) {
   if (statusButton) statusButton.disabled = !connected;
   if (clearAlarmButton) clearAlarmButton.disabled = !connected;
   if (homeButton) homeButton.disabled = !connected;
+  if (saveXyPresetButton) saveXyPresetButton.disabled = !connected;
   
   // Update jog buttons
   Object.values(jogButtons).forEach(button => {
@@ -274,6 +280,159 @@ async function copyLog() {
   }
 }
 
+// Load saved XY coordinates from localStorage
+function loadSavedXyCoordinates() {
+  try {
+    const saved = localStorage.getItem('cnc_xy_coordinates');
+    return saved ? JSON.parse(saved) : {};
+  } catch (error) {
+    logMessage('Failed to load saved XY coordinates', 'error');
+    return {};
+  }
+}
+
+// Save XY coordinates to localStorage
+function saveXyCoordinates() {
+  try {
+    localStorage.setItem('cnc_xy_coordinates', JSON.stringify(savedXyCoordinates));
+    logMessage('XY coordinates saved');
+  } catch (error) {
+    logMessage('Failed to save XY coordinates', 'error');
+  }
+}
+
+// Save current XY position as a preset
+async function saveCurrentXyPosition(name?: string) {
+  if (!isConnected) {
+    logMessage('Not connected to CNC', 'error');
+    return;
+  }
+
+  // Auto-generate name if not provided
+  if (!name) {
+    const existingPresets = Object.keys(savedXyCoordinates);
+    let presetNumber = 1;
+    let generatedName;
+    
+    // Find the next available preset number
+    do {
+      generatedName = `Preset ${presetNumber}`;
+      presetNumber++;
+    } while (existingPresets.includes(generatedName));
+    
+    name = generatedName;
+  }
+
+  // Get current work XY position from the display elements
+  const xPos = workXPos ? parseFloat(workXPos.textContent || '0') : 0;
+  const yPos = workYPos ? parseFloat(workYPos.textContent || '0') : 0;
+
+  savedXyCoordinates[name] = {
+    x: xPos,
+    y: yPos,
+    timestamp: new Date().toISOString()
+  };
+
+  saveXyCoordinates();
+  logMessage(`Saved work XY position "${name}": X${xPos.toFixed(3)} Y${yPos.toFixed(3)}`, 'success');
+  updateXyPresetsUi();
+}
+
+// Go to a saved XY position
+async function gotoSavedXyPosition(name: string) {
+  const coords = savedXyCoordinates[name];
+  if (!coords) {
+    logMessage(`XY position "${name}" not found`, 'error');
+    return;
+  }
+
+  if (!isConnected) {
+    logMessage('Not connected to CNC', 'error');
+    return;
+  }
+
+  try {
+    // Move to the saved work coordinates (using G0 rapid positioning)
+    const response = await CncManager.sendCommand(`G0X${coords.x}Y${coords.y}`);
+    logMessage(`Moving to "${name}": X${coords.x} Y${coords.y} - ${response.trim()}`, 'success');
+  } catch (error) {
+    logMessage(`Failed to move to "${name}": ${error}`, 'error');
+  }
+}
+
+// Delete a saved XY position
+function deleteSavedXyPosition(name: string) {
+  if (savedXyCoordinates[name]) {
+    delete savedXyCoordinates[name];
+    saveXyCoordinates();
+    logMessage(`Deleted XY position "${name}"`, 'success');
+    updateXyPresetsUi();
+  }
+}
+
+// Rename a saved XY position
+function renameSavedXyPosition(oldName: string) {
+  const newName = prompt(`Rename "${oldName}" to:`, oldName);
+  if (!newName || newName === oldName) return;
+  
+  // Check if new name already exists
+  if (savedXyCoordinates[newName]) {
+    alert(`Preset "${newName}" already exists!`);
+    return;
+  }
+  
+  // Move the coordinates to the new name
+  savedXyCoordinates[newName] = savedXyCoordinates[oldName];
+  delete savedXyCoordinates[oldName];
+  
+  saveXyCoordinates();
+  logMessage(`Renamed preset "${oldName}" to "${newName}"`, 'success');
+  updateXyPresetsUi();
+}
+
+// Update the XY presets UI
+function updateXyPresetsUi() {
+  if (!xyPresetsList) return;
+
+  xyPresetsList.innerHTML = '';
+  
+  Object.entries(savedXyCoordinates).forEach(([name, coords]) => {
+    const presetDiv = document.createElement('div');
+    presetDiv.style.cssText = 'display: flex; gap: 4px; align-items: center; margin: 2px 0;';
+    
+    // Go to position button
+    const gotoButton = document.createElement('button');
+    gotoButton.textContent = `${name} (X${coords.x.toFixed(3)} Y${coords.y.toFixed(3)})`;
+    gotoButton.style.cssText = 'font-size: 11px; padding: 4px 8px; flex: 1;';
+    gotoButton.addEventListener('click', () => gotoSavedXyPosition(name));
+    
+    // Rename button
+    const renameButton = document.createElement('button');
+    renameButton.textContent = '✏️';
+    renameButton.title = 'Rename preset';
+    renameButton.style.cssText = 'font-size: 11px; padding: 4px 6px; background: #007bff; color: white; border: none; border-radius: 3px;';
+    renameButton.addEventListener('click', () => renameSavedXyPosition(name));
+    
+    // Delete button
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = '×';
+    deleteButton.title = 'Delete preset';
+    deleteButton.style.cssText = 'font-size: 11px; padding: 4px 6px; background: #dc3545; color: white; border: none; border-radius: 3px;';
+    deleteButton.addEventListener('click', () => {
+      if (confirm(`Delete preset "${name}"?`)) {
+        deleteSavedXyPosition(name);
+      }
+    });
+    
+    presetDiv.appendChild(gotoButton);
+    presetDiv.appendChild(renameButton);
+    presetDiv.appendChild(deleteButton);
+    if (xyPresetsList) {
+      xyPresetsList.appendChild(presetDiv);
+    }
+  });
+}
+
 function setupStepSizeButtons() {
   const stepButtons = [
     { id: 'step_01_button', value: 0.1 },
@@ -334,6 +493,10 @@ window.addEventListener("DOMContentLoaded", () => {
   clearAlarmButton = document.getElementById("clear_alarm_button") as HTMLButtonElement;
   copyLogButton = document.getElementById("copy_log_button") as HTMLButtonElement;
   stepSizeInput = document.getElementById("step_size_input") as HTMLInputElement;
+  
+  // Save XY preset elements
+  saveXyPresetButton = document.getElementById("save_xy_preset_button") as HTMLButtonElement;
+  xyPresetsList = document.getElementById("xy_presets_list");
   
   // Jog buttons
   jogButtons = {
@@ -404,6 +567,15 @@ window.addEventListener("DOMContentLoaded", () => {
   
   // Setup step size buttons
   setupStepSizeButtons();
+  
+  // Save XY preset functionality
+  if (saveXyPresetButton) {
+    saveXyPresetButton.addEventListener("click", () => saveCurrentXyPosition());
+  }
+  
+  // Load saved XY coordinates and update UI
+  savedXyCoordinates = loadSavedXyCoordinates();
+  updateXyPresetsUi();
   
   // Initial state
   updateConnectionStatus(false);

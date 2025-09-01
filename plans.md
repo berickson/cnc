@@ -9,11 +9,13 @@ cnc-panel is in the beginning phase of porting into Tauri the following need to 
 - [x] Copy button should copy to clipboard, but stopped working when we moved to Tauri
 [x] Coordinates need to update from machine status
 [x] When connecting, should connect after the first proper multicast message received (currently waiting for several) 
-[ ] save xy button not working
+[x] save xy button not working
 [ ] Shouldn't allow jogging past the machine limits
 [ ] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
 [ ] Need robust button disabling
 [ ] discuss: Don't show information that you don't know, for example, work positions should probably not show until zeroed, machine positions are suspicious until you've zeroed
+[ ] Hide log should be closer to log, should also have clear log buttton
+
 
 ### Persistence
 [ ] Save last connection and reconnect on startup
