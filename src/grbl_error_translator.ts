@@ -60,8 +60,8 @@ export class GrblErrorTranslator {
     6: { desc: "Homing fail. Reset during active homing cycle", remedy: "Restart homing cycle" },
     7: { desc: "Homing fail. Safety door was opened during active homing cycle", remedy: "Close safety door and restart homing" },
     8: { desc: "Homing fail. Cycle failed to clear limit switch when pulling off", remedy: "Check pull-off setting and wiring" },
-    9: { desc: "Homing fail. Could not find limit switch within search distance", remedy: "Check limit switch wiring and max travel settings" },
-    10: { desc: "Homing fail. On dual axis machines, could not find the second limit switch for self-squaring", remedy: "Check second limit switch wiring" }
+    9: { desc: "Hard limit triggered during motion. Machine position is likely lost", remedy: "Re-homing is highly recommended" },
+    10: { desc: "Soft limit error. G-code motion target exceeds machine travel", remedy: "Check G-code and machine limits" }
   };
 
   private static readonly STATE_DESCRIPTIONS: { [key: string]: string } = {

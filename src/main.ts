@@ -211,6 +211,11 @@ function update_status_display(state: CncState): void {
       status_indicator.className = 'status-indicator alarm';
       status_text.textContent = 'ALARM';
       break;
+    case CncState.RUNNING:
+      status_indicator.className = 'status-indicator running';
+      status_text.textContent = 'Running';
+      current_status_details.connection_status = 'Running Operation';
+      break;
   }
   
   current_status_details.last_updated = new Date().toLocaleTimeString();
@@ -543,15 +548,21 @@ async function updateMachineStatus() {
         let alarmCode = 'None';
         
         // Extract alarm code from parsed state if present
-        if (parsed.state.includes('Alarm:')) {
-          // The parseStatus already formats it as "Alarm: 9 (Hard limit triggered)"
+        if (parsed.state.includes('Alarm')) {
           displayState = parsed.state;
           
-          // Also update our tracked alarm code
-          const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
+          // Try multiple alarm code extraction patterns
+          let alarmMatch = parsed.state.match(/Alarm[:\s]*(\d+)/); // "Alarm: 9" or "Alarm 9:"
+          if (!alarmMatch) {
+            alarmMatch = parsed.state.match(/Alarm[:\s]+(\d+)/); // More flexible spacing
+          }
+          
           if (alarmMatch) {
             current_alarm_code = parseInt(alarmMatch[1]);
             alarmCode = `${current_alarm_code}`;
+            log_message(`🚨 Extracted alarm code: ${current_alarm_code}`, 'error');
+          } else {
+            log_message(`🚨 Could not extract alarm code from: "${parsed.state}"`, 'error');
           }
         } else if (parsed.state.includes('Alarm') && current_alarm_code !== null) {
           // Fallback: if we just have "Alarm" but have a tracked code, show details

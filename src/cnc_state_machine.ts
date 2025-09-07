@@ -7,6 +7,7 @@ export enum CncState {
   JOG_REQUESTED = 'jog_requested',
   JOGGING = 'jogging',
   HOMING = 'homing',
+  RUNNING = 'running',
   ALARM = 'alarm'
 }
 
@@ -17,6 +18,10 @@ export enum EventType {
   HOME_BUTTON_CLICKED = 'home_button_clicked',
   JOG_BUTTON_CLICKED = 'jog_button_clicked',
   CLEAR_ALARM_CLICKED = 'clear_alarm_clicked',
+  
+  // Running operation events
+  OPERATION_STARTED = 'operation_started',
+  OPERATION_COMPLETED = 'operation_completed',
   
   // Command response events
   COMMAND_SUCCESS = 'command_success',
@@ -121,6 +126,10 @@ export class CncStateMachine {
           
         case CncState.HOMING:
           this.handle_homing_state(event);
+          break;
+          
+        case CncState.RUNNING:
+          this.handle_running_state(event);
           break;
           
         case CncState.ALARM:
@@ -278,6 +287,34 @@ export class CncStateMachine {
     }
   }
 
+  private handle_running_state(event: CncEvent): void {
+    const log_message = (window as any).log_message || console.log;
+    
+    switch (event.type) {
+      case EventType.OPERATION_COMPLETED:
+        log_message('✅ Operation completed, returning to idle', 'success');
+        this.transition_to(CncState.IDLE, event);
+        break;
+      case EventType.STATUS_IDLE:
+        // If we get idle status while running, operation completed
+        log_message('✅ Status shows idle, operation completed', 'success');
+        this.transition_to(CncState.IDLE, event);
+        break;
+      case EventType.STATUS_ALARM:
+        log_message('❌ Alarm during operation', 'error');
+        this.transition_to(CncState.ALARM, event);
+        break;
+      case EventType.DISCONNECT_BUTTON_CLICKED:
+        this.transition_to(CncState.DISCONNECTED, event);
+        break;
+      // Block other user actions while running
+      case EventType.HOME_BUTTON_CLICKED:
+      case EventType.JOG_BUTTON_CLICKED:
+        log_message('🚫 User action blocked while operation running', 'warning');
+        break;
+    }
+  }
+
   // Helper methods for UI state queries
   is_connected(): boolean {
     return this.current_state !== CncState.DISCONNECTED && this.current_state !== CncState.CONNECTING;
@@ -297,7 +334,8 @@ export class CncStateMachine {
   }
 
   can_home(): boolean {
-    return this.current_state === CncState.IDLE;
+    // Allow homing when idle OR when in alarm state (especially for hard limits)
+    return this.current_state === CncState.IDLE || this.current_state === CncState.ALARM;
   }
 
   can_clear_alarm(): boolean {
