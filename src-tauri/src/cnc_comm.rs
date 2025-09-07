@@ -232,6 +232,19 @@ impl CncManager {
         }
     }
 
+    /// Send a command without waiting for response (fire and forget)
+    /// Useful for long-running commands like homing that block the communication
+    pub fn send_command_no_wait(&mut self, command: &str) -> Result<()> {
+        if let Some(ref mut stream) = self.current_connection {
+            let cmd_with_newline = format!("{}\n", command);
+            stream.write_all(cmd_with_newline.as_bytes())?;
+            stream.flush()?; // Ensure data is sent immediately
+            Ok(())
+        } else {
+            Err(anyhow!("Not connected to any device"))
+        }
+    }
+
     /// Disconnect from current device
     pub fn disconnect(&mut self) {
         self.current_connection = None;
@@ -244,26 +257,22 @@ impl CncManager {
         self.send_command(&command)
     }
 
+    /// Send jog command (non-blocking)
+    pub fn jog_no_wait(&mut self, axis: &str, distance: f32, feed_rate: u32) -> Result<()> {
+        let command = format!("$J=G91{}{}F{}", axis, distance, feed_rate);
+        self.send_command_no_wait(&command)
+    }
+
     /// Get machine status
     pub fn get_status(&mut self) -> Result<String> {
         self.send_command("?")
     }
 
-    /// Home the machine
-    pub fn home(&mut self) -> Result<String> {
-        // Homing takes longer than normal commands, so increase timeout temporarily
-        if let Some(ref stream) = self.current_connection {
-            stream.set_read_timeout(Some(Duration::from_millis(30000)))?; // 30 second timeout for homing
-        }
-        
-        let result = self.send_command("$H");
-        
-        // Restore normal timeout after homing command
-        if let Some(ref stream) = self.current_connection {
-            stream.set_read_timeout(Some(Duration::from_millis(5000)))?; // Back to 5 second timeout
-        }
-        
-        result
+    /// Home the machine (non-blocking version)
+    pub fn home(&mut self) -> Result<()> {
+        // Send homing command without waiting for response
+        // Status polling will detect when homing is complete
+        self.send_command_no_wait("$H")
     }
 
     /// Reset/unlock the machine

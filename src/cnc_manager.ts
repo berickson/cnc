@@ -77,10 +77,21 @@ export class CncManager {
   }
 
   /**
-   * Home the machine
+   * Jog the machine in a specific direction (non-blocking)
    */
-  static async home(): Promise<string> {
-    return await invoke<string>("home_cnc");
+  static async jog_no_wait(axis: string, distance: number, feed_rate: number = 1000): Promise<void> {
+    return await invoke<void>("jog_cnc_no_wait", { 
+      axis: axis, 
+      distance: distance, 
+      feed_rate: feed_rate 
+    });
+  }
+
+  /**
+   * Home the machine (non-blocking)
+   */
+  static async home(): Promise<void> {
+    return await invoke<void>("home_cnc");
   }
 
   /**

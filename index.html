@@ -91,6 +91,90 @@
       background-color: #28a745;
     }
     
+    .status-indicator.connecting {
+      background-color: #ffc107;
+      animation: pulse 1s infinite;
+    }
+    
+    .status-indicator.alarm {
+      background-color: #dc3545;
+      animation: pulse 0.5s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
+    
+    .status-details-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 2000;
+    }
+    
+    .status-details-content {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 400px;
+      width: 90%;
+      max-height: 80%;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    
+    .status-details-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #e9ecef;
+      padding-bottom: 12px;
+    }
+    
+    .status-details-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #6c757d;
+      padding: 0;
+      min-height: auto;
+    }
+    
+    .status-details-close:hover {
+      color: #dc3545;
+      background: none;
+    }
+    
+    .status-detail-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #f8f9fa;
+    }
+    
+    .status-detail-label {
+      font-weight: bold;
+      color: #495057;
+      font-size: 14px;
+    }
+    
+    .status-detail-value {
+      font-family: monospace;
+      color: #212529;
+      font-size: 14px;
+    }
+    
     button {
       background-color: #007bff;
       color: white;
@@ -150,10 +234,10 @@
       border-radius: 4px;
       font-family: monospace;
       font-size: 12px;
-      height: 120px;
       overflow-y: auto;
       white-space: pre-wrap;
-      display: none;
+      display: block;
+      min-height: 100px;
     }
     
     .log.visible {
@@ -289,12 +373,10 @@
       <h2 style="margin: 0 0 6px 0; font-size: 16px;">CNC Panel - Genmitsu 3030 ProVer Max</h2>
       <div class="status">
         <div class="status-indicator" id="status_indicator"></div>
-        <span id="status_text" style="font-size: 13px;">Disconnected</span>
-        <span style="margin-left: 8px; font-weight: bold; font-size: 13px;">State: <span id="machine_state">Unknown</span></span>
+        <span id="status_text" style="font-size: 13px; width: 180px; display: inline-block; cursor: pointer;" title="Click for details">Disconnected</span>
         <button id="connect_button">Connect</button>
         <button id="disconnect_button" disabled>Disconnect</button>
         <button id="clear_alarm_button" disabled>Clear Alarm</button>
-        <button id="toggle_log_button">Show Log</button>
       </div>
       <button id="fullscreen_toggle_button" style="position: absolute; right: 16px; top: 16px; width: 56px; height: 56px; background: #007bff; color: white; border: none; border-radius: 50%; font-size: 32px; display: flex; align-items: center; justify-content: center; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15); cursor: pointer;">
         <span id="fullscreen_icon">⛶</span>
@@ -366,14 +448,15 @@
         </div>
       </div>
       
-      <div class="compact_panel" id="log_panel" style="flex: 1; min-height: 0;">
+      <div class="compact_panel" id="log_panel" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
           <h4 style="margin: 0; font-size: 12px;">Communication Log</h4>
           <div>
+            <button id="toggle_log_button" style="font-size: 12px; padding: 4px 6px; margin-right: 4px;">Hide Log</button>
             <button id="copy_log_button" style="font-size: 12px; padding: 4px 6px;">Copy</button>
           </div>
         </div>
-        <div class="log" id="communication_log" style="height: 80px;"></div>
+        <div class="log" id="communication_log" style="flex: 1; min-height: 0;"></div>
       </div>
     </div>
     
@@ -425,6 +508,19 @@
     </div>
     
     <div id="error_container" style="grid-column: 1 / -1; min-height: 0;"></div>
+  </div>
+
+  <!-- Status Details Modal -->
+  <div id="status_details_modal" class="status-details-modal">
+    <div class="status-details-content">
+      <div class="status-details-header">
+        <h3 style="margin: 0; font-size: 18px;">System Status Details</h3>
+        <button id="status_details_close" class="status-details-close">&times;</button>
+      </div>
+      <div id="status_details_body">
+        <!-- Dynamic content will be inserted here -->
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

@@ -53,6 +53,19 @@ fn jog_cnc(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command(rename_all = "snake_case")]
+fn jog_cnc_no_wait(
+    axis: String,
+    distance: f32,
+    feed_rate: u32,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut manager = state.cnc_manager.lock().map_err(|e| e.to_string())?;
+    manager
+        .jog_no_wait(&axis, distance, feed_rate)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_cnc_status(state: tauri::State<AppState>) -> Result<String, String> {
     let mut manager = state.cnc_manager.lock().map_err(|e| e.to_string())?;
@@ -60,7 +73,7 @@ fn get_cnc_status(state: tauri::State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn home_cnc(state: tauri::State<AppState>) -> Result<String, String> {
+fn home_cnc(state: tauri::State<AppState>) -> Result<(), String> {
     let mut manager = state.cnc_manager.lock().map_err(|e| e.to_string())?;
     manager.home().map_err(|e| e.to_string())
 }
@@ -127,6 +140,7 @@ pub fn run() {
             disconnect_cnc,
             send_cnc_command,
             jog_cnc,
+            jog_cnc_no_wait,
             get_cnc_status,
             home_cnc,
             reset_cnc,

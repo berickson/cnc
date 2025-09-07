@@ -83,17 +83,17 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> ready
-    ready --> discovering : Connect button clicked
+    ready --> discovering : CONNECT_BUTTON_CLICKED
     discovering --> device_found : CNC device discovered via multicast
     discovering --> no_devices : No devices found
     device_found --> tcp_connecting : CncManager.connect(device)
     tcp_connecting --> grbl_validation : TCP connection established
     grbl_validation --> alarm_check : GRBL response valid
-    alarm_check --> connected : Connection complete
+    alarm_check --> connected : CONNECTION_SUCCESS
     tcp_connecting --> connection_failed : TCP connection failed
     grbl_validation --> connection_failed : Invalid GRBL response
-    no_devices --> ready : Return to ready state
-    connection_failed --> ready : Return to ready state
+    no_devices --> ready : CONNECTION_FAILED
+    connection_failed --> ready : CONNECTION_FAILED
     
     note right of grbl_validation
         Sends "?" command and checks
@@ -113,20 +113,20 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> idle
     
-    idle --> jog_requested : Jog button clicked
-    jog_requested --> jogging : Jog command sent (ok response)
-    jogging --> idle : status === 'Idle'
-    jog_requested --> idle : Jog command failed
+    idle --> jog_requested : JOG_BUTTON_CLICKED
+    jog_requested --> jogging : COMMAND_SUCCESS
+    jogging --> idle : STATUS_IDLE
+    jog_requested --> idle : COMMAND_FAILED
     
-    idle --> homing : Home button clicked
+    idle --> homing : HOME_BUTTON_CLICKED
     homing --> idle : Homing complete
     
-    idle --> alarm : status.includes('Alarm')
-    alarm --> idle : status === 'Idle'
+    idle --> alarm : STATUS_ALARM
+    alarm --> idle : STATUS_IDLE
     
     note right of jogging
         GRBL states: 'Idle' → 'Jog' → 'Idle'
-        Completion: status === 'Idle'
+        Completion: STATUS_IDLE event
         Detection via ? command (100ms poll)
     end note
     
@@ -141,39 +141,40 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> homing_requested
-    homing_requested --> homing_in_progress : Home command sent (ok response)
-    homing_in_progress --> [*] : status === 'Idle' && both flags true
-    homing_requested --> [*] : Home command failed
+    homing_requested --> homing_in_progress : COMMAND_SUCCESS
+    homing_in_progress --> [*] : STATUS_IDLE
+    homing_requested --> [*] : COMMAND_FAILED
     
     state homing_requested {
         [*] --> set_flags
-        set_flags --> defer_command
-        defer_command --> send_command
+        set_flags --> send_command
         
-        set_flags : is_homing=true
-        set_flags : UI="Homing..."
-        defer_command : setTimeout(0)
-        send_command : home_command_sent=true
+        set_flags : UI updates immediately
+        set_flags : "Homing..." displayed
+        send_command : await CncManager.home()
+        send_command : → COMMAND_SUCCESS/FAILED
     }
     
     state homing_in_progress {
         [*] --> waiting_for_completion
         waiting_for_completion --> check_status
-        check_status --> waiting_for_completion : Still homing
-        check_status --> [*] : Idle + both flags true
+        check_status --> waiting_for_completion : STATUS_HOME
+        check_status --> [*] : STATUS_IDLE
         
         check_status : Status poll (100ms)
+        check_status : parsed.state check
     }
     
     note right of homing_requested
-        Critical: UI updates immediately
-        Race condition window exists
+        Race condition eliminated:
+        No setTimeout needed
+        Command response drives transition
     end note
     
     note right of homing_in_progress
         Status polling continues every 100ms
-        Completion: is_homing && status === 'Idle' && home_command_sent
-        Then: is_homing = false, home_command_sent = false
+        Completion: STATUS_IDLE event
+        State machine handles all transitions
     end note
 ```
 

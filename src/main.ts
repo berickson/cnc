@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { CncManager, type CncDevice } from "./cnc_manager";
 import { RunStatistics, time_async, time_sync } from "./performance_stats";
+import { CncStateMachine, CncState, EventType, type CncEvent } from "./cnc_state_machine";
 
 // Performance monitoring stats
 const status_update_stats = new RunStatistics("CNC Status Update");
@@ -83,9 +84,34 @@ let connect_button: HTMLButtonElement | null;
 let disconnect_button: HTMLButtonElement | null;
 let status_indicator: HTMLElement | null;
 let status_text: HTMLElement | null;
-let machine_state: HTMLElement | null;
 let communication_log: HTMLElement | null;
 let toggle_log_button: HTMLButtonElement | null;
+
+// Status details modal elements
+let status_details_modal: HTMLElement | null;
+let status_details_close: HTMLButtonElement | null;
+let status_details_body: HTMLElement | null;
+
+// Store detailed status information for the modal
+interface StatusDetails {
+  connection_status: string;
+  device_info: string;
+  grbl_state: string;
+  grbl_substate: string;
+  position_wco: string;
+  alarm_code: string;
+  last_updated: string;
+}
+
+let current_status_details: StatusDetails = {
+  connection_status: 'Disconnected',
+  device_info: 'None',
+  grbl_state: 'Unknown',
+  grbl_substate: 'None',
+  position_wco: 'Unknown',
+  alarm_code: 'None',
+  last_updated: 'Never'
+};
 
 // Position display elements
 let machine_x_pos: HTMLElement | null;
@@ -107,12 +133,163 @@ let zero_buttons: { [key: string]: HTMLButtonElement | null } = {};
 let save_xy_preset_button: HTMLButtonElement | null;
 let xy_presets_list: HTMLElement | null;
 
+// Global state management
+const state_machine = new CncStateMachine();
+
+// State change listener to update UI based on state machine
+function handle_state_change(old_state: CncState, new_state: CncState, event: CncEvent): void {
+  log_message(`🔄 State change: ${old_state} → ${new_state} (${event.type})`, 'success');
+  
+  // Update connection status
+  const connected = state_machine.is_connected();
+  is_connected = connected;
+  
+  // Update UI elements based on new state
+  update_button_states();
+  update_status_display(new_state);
+}
+
+function update_button_states(): void {
+  const connected = state_machine.is_connected();
+  const can_jog = state_machine.can_jog();
+  const can_home = state_machine.can_home();
+  const can_clear_alarm = state_machine.can_clear_alarm();
+  
+  // Connection buttons
+  if (connect_button) connect_button.disabled = connected;
+  if (disconnect_button) disconnect_button.disabled = !connected;
+  
+  // Operation buttons - more intelligent based on state
+  if (home_button) home_button.disabled = !can_home;
+  if (clear_alarm_button) clear_alarm_button.disabled = !can_clear_alarm;
+  if (save_xy_preset_button) save_xy_preset_button.disabled = !connected;
+  
+  // Jog buttons
+  Object.values(jog_buttons).forEach(button => {
+    if (button) button.disabled = !can_jog;
+  });
+  
+  // Zero buttons
+  Object.values(zero_buttons).forEach(button => {
+    if (button) button.disabled = !connected;
+  });
+}
+
+function update_status_display(state: CncState): void {
+  if (!status_indicator || !status_text) return;
+  
+  log_message(`🎨 Updating status display for state: ${state}`, 'info');
+  log_message(`🔧 DEBUG: State machine current state: ${state_machine.get_current_state()}`, 'info');
+  
+  switch (state) {
+    case CncState.DISCONNECTED:
+      status_indicator.className = 'status-indicator';
+      status_text.textContent = 'Disconnected';
+      current_status_details.connection_status = 'Disconnected';
+      break;
+    case CncState.CONNECTING:
+      status_indicator.className = 'status-indicator connecting';
+      status_text.textContent = 'Connecting...';
+      current_status_details.connection_status = 'Connecting';
+      break;
+    case CncState.IDLE:
+      status_indicator.className = 'status-indicator connected';
+      status_text.textContent = 'Ready';
+      current_status_details.connection_status = 'Connected';
+      break;
+    case CncState.JOG_REQUESTED:
+      status_text.textContent = 'Jog Requested';
+      break;
+    case CncState.JOGGING:
+      status_text.textContent = 'Jogging';
+      break;
+    case CncState.HOMING:
+      log_message(`🎨 setting textContent to "Homing"`, 'info');
+      status_text.textContent = 'Homing';
+      break;
+    case CncState.ALARM:
+      status_indicator.className = 'status-indicator alarm';
+      status_text.textContent = 'ALARM';
+      break;
+  }
+  
+  current_status_details.last_updated = new Date().toLocaleTimeString();
+}
+
+// Status details modal functions
+function show_status_details() {
+  if (!status_details_modal || !status_details_body) return;
+  
+  // Update device info
+  const lastDevice = loadLastConnection();
+  current_status_details.device_info = lastDevice ? 
+    `${lastDevice.name} (${lastDevice.ip}:${lastDevice.port})` : 'None';
+  
+  // Update position info
+  const wcoInfo = `X: ${last_work_offset.x.toFixed(3)}, Y: ${last_work_offset.y.toFixed(3)}, Z: ${last_work_offset.z.toFixed(3)}`;
+  current_status_details.position_wco = wcoInfo;
+  
+  // Generate the modal content
+  const content = `
+    <div class="status-detail-row">
+      <span class="status-detail-label">Connection:</span>
+      <span class="status-detail-value">${current_status_details.connection_status}</span>
+    </div>
+    <div class="status-detail-row">
+      <span class="status-detail-label">Device:</span>
+      <span class="status-detail-value">${current_status_details.device_info}</span>
+    </div>
+    <div class="status-detail-row">
+      <span class="status-detail-label">GRBL State:</span>
+      <span class="status-detail-value">${current_status_details.grbl_state}</span>
+    </div>
+    <div class="status-detail-row">
+      <span class="status-detail-label">Alarm Code:</span>
+      <span class="status-detail-value">${current_status_details.alarm_code}</span>
+    </div>
+    <div class="status-detail-row">
+      <span class="status-detail-label">Work Offset:</span>
+      <span class="status-detail-value">${current_status_details.position_wco}</span>
+    </div>
+    <div class="status-detail-row">
+      <span class="status-detail-label">Last Updated:</span>
+      <span class="status-detail-value">${current_status_details.last_updated}</span>
+    </div>
+  `;
+  
+  status_details_body.innerHTML = content;
+  status_details_modal.style.display = 'flex';
+}
+
+function hide_status_details() {
+  if (!status_details_modal) return;
+  status_details_modal.style.display = 'none';
+}
+
+// Debug functions for testing
+function debug_cnc_state() {
+  log_message(`🔍 DEBUG STATE REPORT:`, 'info');
+  log_message(`   Current state: ${state_machine.get_current_state()}`, 'info');
+  log_message(`   Can jog: ${state_machine.can_jog()}`, 'info');
+  log_message(`   Can home: ${state_machine.can_home()}`, 'info');
+  log_message(`   Is connected: ${state_machine.is_connected()}`, 'info');
+  log_message(`   Is busy: ${state_machine.is_busy()}`, 'info');
+}
+
+function debug_force_idle() {
+  log_message('🔧 DEBUG: Forcing state to IDLE for testing', 'info');
+  state_machine.handle_event({ type: EventType.STATUS_IDLE, data: {} });
+}
+
+// Make debug functions available globally
+(window as any).debug_cnc_state = debug_cnc_state;
+(window as any).debug_force_idle = debug_force_idle;
+
+// Global state
 let is_connected = false;
 let discovered_devices: CncDevice[] = [];
 let last_work_offset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
 let current_alarm_code: number | null = null; // Track current alarm code
-let is_homing = false; // Track homing state - GRBL ignores status queries during homing
-let home_command_sent = false; // Track if home command has actually been sent to prevent premature completion detection
 let saved_xy_coordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
 
 async function greet() {
@@ -194,13 +371,29 @@ async function attemptAutoReconnect(): Promise<boolean> {
   const lastConnection = loadLastConnection();
   if (lastConnection) {
     log_message(`Attempting to reconnect to ${lastConnection.name} at ${lastConnection.ip}:${lastConnection.port}`, 'info');
+    
+    // Notify state machine that connection is starting
+    state_machine.handle_event({ type: EventType.CONNECT_BUTTON_CLICKED });
+    
     try {
       await CncManager.connect(lastConnection);
+      
+      // Notify state machine of successful connection
+      state_machine.handle_event({ type: EventType.CONNECTION_SUCCESS, data: lastConnection });
+      
       update_connection_status(true, lastConnection);
       log_message('Auto-reconnect successful', 'success');
+      
+      // Get initial status to set correct state
+      await updateMachineStatus();
+      
       return true;
     } catch (error) {
       log_message(`Auto-reconnect failed: ${error}`, 'error');
+      
+      // Notify state machine of failed connection
+      state_machine.handle_event({ type: EventType.CONNECTION_FAILED });
+      
       // Keep the saved connection for future attempts - user can use discovery if needed
       return false;
     }
@@ -215,7 +408,16 @@ function update_connection_status(connected: boolean, deviceInfo?: CncDevice) {
     status_indicator.className = `status-indicator ${connected ? 'connected' : ''}`;
   }
   
-  if (status_text) {
+  // Only update status text if state machine is in a basic state
+  // Don't override status during operations like homing, jogging, etc.
+  const current_state = state_machine.get_current_state();
+  const can_update_status = [
+    CncState.DISCONNECTED,
+    CncState.CONNECTING,
+    CncState.IDLE
+  ].includes(current_state);
+  
+  if (status_text && can_update_status) {
     if (connected && deviceInfo) {
       status_text.textContent = `Connected to ${deviceInfo.name} (${deviceInfo.ip}:${deviceInfo.port})`;
     } else {
@@ -242,6 +444,9 @@ function update_connection_status(connected: boolean, deviceInfo?: CncDevice) {
 }
 
 async function discover_and_connect() {
+  // Send event to state machine
+  state_machine.handle_event({ type: EventType.CONNECT_BUTTON_CLICKED });
+  
   log_message("Starting CNC device discovery...");
   connect_button!.textContent = "Discovering...";
   connect_button!.disabled = true;
@@ -252,6 +457,7 @@ async function discover_and_connect() {
     
     if (discovered_devices.length === 0) {
       log_message("No CNC devices found. Make sure your Genmitsu WiFi module is connected and powered on.", 'error');
+      state_machine.handle_event({ type: EventType.CONNECTION_FAILED });
       return;
     }
     
@@ -261,6 +467,9 @@ async function discover_and_connect() {
     log_message(`Attempting to connect to ${device.name} at ${device.ip}:${device.port}`);
     
     await CncManager.connect(device);
+    
+    // Connection successful
+    state_machine.handle_event({ type: EventType.CONNECTION_SUCCESS, data: device });
     update_connection_status(true, device);
     saveLastConnection(device); // Save successful connection
     log_message(`Successfully connected to ${device.name}`, 'success');
@@ -290,6 +499,7 @@ async function discover_and_connect() {
     
   } catch (error) {
     log_message(`Connection failed: ${error}`, 'error');
+    state_machine.handle_event({ type: EventType.CONNECTION_FAILED });
     update_connection_status(false);
     // Don't clear saved connection on discovery/connect failure - might be temporary
   } finally {
@@ -314,37 +524,30 @@ async function updateMachineStatus() {
   if (!is_connected) return;
   
   return await time_async(status_update_stats, async () => {
-    // If we're homing, always show "Homing..." regardless of GRBL response
-    if (is_homing && machine_state) {
-      machine_state.textContent = 'Homing...';
-      machine_state.style.color = '#ffc107';
-    }
-    
     try {
       const status = await time_async(network_stats, () => CncManager.get_status());
-      
       const parsed = CncManager.parse_status(status, last_work_offset);
     
-    if (parsed) {
-      // Update stored work offset if this status contains WCO
-      if ((parsed as any).workOffset) {
-        last_work_offset = (parsed as any).workOffset;
-      }
-      
-      // Update machine state
-      if (machine_state) {
+      if (parsed) {
+        // Update stored work offset if this status contains WCO
+        if ((parsed as any).workOffset) {
+          last_work_offset = (parsed as any).workOffset;
+        }
+        
+        // Update status details for the modal
         let displayState = parsed.state;
+        let alarmCode = 'None';
         
         // Extract alarm code from parsed state if present
         if (parsed.state.includes('Alarm:')) {
           // The parseStatus already formats it as "Alarm: 9 (Hard limit triggered)"
-          // So we can use it directly
           displayState = parsed.state;
           
           // Also update our tracked alarm code
           const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
           if (alarmMatch) {
             current_alarm_code = parseInt(alarmMatch[1]);
+            alarmCode = `${current_alarm_code}`;
           }
         } else if (parsed.state.includes('Alarm') && current_alarm_code !== null) {
           // Fallback: if we just have "Alarm" but have a tracked code, show details
@@ -361,117 +564,107 @@ async function updateMachineStatus() {
             10: 'Soft limit error'
           };
           displayState = `Alarm: ${current_alarm_code} (${alarmDescriptions[current_alarm_code] || 'Unknown'})`;
+          alarmCode = `${current_alarm_code}`;
         } else {
           // Clear alarm code if not in alarm state
           current_alarm_code = null;
         }
         
-        // Detect when homing completes - only if command was actually sent
-        if (is_homing && parsed.state === 'Idle' && home_command_sent) {
-          is_homing = false;
-          home_command_sent = false;
-          log_message("Homing completed", 'success');
-          // Force immediate UI update now that homing is complete
-          if (machine_state) {
-            machine_state.textContent = 'Idle';
-            machine_state.style.color = '#28a745';
-          }
+        // Update detailed status information
+        current_status_details.grbl_state = displayState;
+        current_status_details.grbl_substate = 'None'; // GRBL doesn't typically provide substates
+        current_status_details.alarm_code = alarmCode;
+        
+        // Send status events to state machine
+        if (parsed.state === 'Idle') {
+          log_message('📡 Sending STATUS_IDLE event to state machine', 'info');
+          log_message(`🔧 DEBUG: About to call handle_event with STATUS_IDLE, state machine type: ${typeof state_machine}`, 'info');
+          state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
+          log_message(`🔧 DEBUG: Called handle_event with STATUS_IDLE`, 'info');
+        } else if (parsed.state === 'Jog') {
+          log_message('📡 Sending STATUS_JOG event to state machine', 'info');
+          state_machine.handle_event({ type: EventType.STATUS_JOG, data: parsed });
+        } else if (parsed.state === 'Home') {
+          log_message('📡 Sending STATUS_HOME event to state machine', 'info');
+          state_machine.handle_event({ type: EventType.STATUS_HOME, data: parsed });
+        } else if (parsed.state.includes('Alarm')) {
+          log_message('📡 Sending STATUS_ALARM event to state machine', 'info');
+          state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
+        } else {
+          log_message(`❓ Unknown status state: ${parsed.state}`, 'error');
         }
         
-        // Only update display state if we're not homing
-        if (!is_homing) {
-          machine_state.textContent = displayState;
-          machine_state.style.color = parsed.state === 'Idle' ? '#28a745' : 
-                                     parsed.state.includes('Alarm') ? '#dc3545' : '#ffc107';
-        }
+        // Update position displays
+        if (machine_x_pos) machine_x_pos.textContent = parsed.position.x.toFixed(3);
+        if (machine_y_pos) machine_y_pos.textContent = parsed.position.y.toFixed(3);
+        if (machine_z_pos) machine_z_pos.textContent = parsed.position.z.toFixed(3);
+        if (work_x_pos) work_x_pos.textContent = parsed.workPosition.x.toFixed(3);
+        if (work_y_pos) work_y_pos.textContent = parsed.workPosition.y.toFixed(3);
+        if (work_z_pos) work_z_pos.textContent = parsed.workPosition.z.toFixed(3);
       }
-      
-      // Update position displays
-      if (machine_x_pos) machine_x_pos.textContent = parsed.position.x.toFixed(3);
-      if (machine_y_pos) machine_y_pos.textContent = parsed.position.y.toFixed(3);
-      if (machine_z_pos) machine_z_pos.textContent = parsed.position.z.toFixed(3);
-      if (work_x_pos) work_x_pos.textContent = parsed.workPosition.x.toFixed(3);
-      if (work_y_pos) work_y_pos.textContent = parsed.workPosition.y.toFixed(3);
-      if (work_z_pos) work_z_pos.textContent = parsed.workPosition.z.toFixed(3);
-    }
-    
     } catch (error) {
       log_message(`Status update failed: ${error}`, 'error');
     }
   });
 }
 
-async function send_jog_command(axis: string, direction: number) {
-  if (!is_connected) return;
+function send_jog_command(axis: string, direction: number) {
+  log_message(`🎮 Jog button clicked: ${axis} ${direction}`, 'info');
+  log_message(`🔍 Can jog: ${state_machine.can_jog()}`, 'info');
+  log_message(`📊 Current state: ${state_machine.get_current_state()}`, 'info');
+  
+  if (!state_machine.can_jog()) {
+    log_message('🚫 Jog blocked by state machine', 'error');
+    return;
+  }
   
   const stepSize = parseFloat(step_size_input!.value);
   const distance = stepSize * direction;
   
-  try {
-    const response = await CncManager.jog(axis, distance);
-    const trimmedResponse = response.trim();
-    
-    // Check if response contains an error and translate it
-    if (CncManager.contains_error(trimmedResponse)) {
-      const translatedResponse = CncManager.translate_response(trimmedResponse);
-      log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${translatedResponse}`, 'error');
-    } else {
-      log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${trimmedResponse}`);
-    }
-  } catch (error) {
-    log_message(`Jog failed: ${error}`, 'error');
-  }
+  log_message(`📤 Sending jog command: ${axis} ${distance}`, 'info');
+  
+  // Send event to state machine
+  state_machine.handle_event({ 
+    type: EventType.JOG_BUTTON_CLICKED, 
+    data: { axis, direction, distance } 
+  });
+  
+  // Use non-blocking jog command
+  CncManager.jog_no_wait(axis, distance).then(() => {
+    log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: command sent`, 'success');
+    state_machine.handle_event({ type: EventType.COMMAND_SUCCESS });
+  }).catch(error => {
+    log_message(`❌ Jog error: ${error}`, 'error');
+    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
+  });
 }
 
-async function home_all_axes() {
-  if (!is_connected) return;
+function home_all_axes() {
+  if (!state_machine.can_home()) return;
   
-  try {
-    is_homing = true;
-    
-    // Update status display immediately to show "Homing..." 
-    if (machine_state) {
-      machine_state.textContent = 'Homing...';
-      machine_state.style.color = '#ffc107';
-    }
-    
-    log_message("Homing all axes...");
-    
-    // Use setTimeout to defer the home command to the next event loop tick
-    // This allows the UI updates above to be rendered immediately
-    setTimeout(() => {
-      home_command_sent = true;
-      
-      CncManager.home().then(response => {
-        const trimmedResponse = response.trim();
-        
-        if (CncManager.contains_error(trimmedResponse)) {
-          const translatedResponse = CncManager.translate_response(trimmedResponse);
-          log_message(`Home command: ${translatedResponse}`, 'error');
-          is_homing = false;
-          home_command_sent = false;
-          updateMachineStatus();
-        } else {
-          log_message(`Home command: ${trimmedResponse}`, 'success');
-        }
-      }).catch(error => {
-        log_message(`Home failed: ${error}`, 'error');
-        is_homing = false;
-        home_command_sent = false;
-        updateMachineStatus();
-      });
-    }, 0);
-    
-  } catch (error) {
-    log_message(`Home failed: ${error}`, 'error');
-    is_homing = false;
-    home_command_sent = false;
-    await updateMachineStatus();
-  }
+  // Send event to state machine
+  state_machine.handle_event({ type: EventType.HOME_BUTTON_CLICKED });
+  
+  log_message("Homing all axes...");
+  
+  // Fire and forget - send command and return immediately
+  // Use setTimeout to ensure this doesn't block even if invoke is synchronous
+  setTimeout(() => {
+    CncManager.home().then(() => {
+      log_message("Home command sent successfully", 'success');
+      // Don't send COMMAND_SUCCESS here - let status polling detect completion
+    }).catch(error => {
+      log_message(`Home command error: ${error}`, 'error');
+      state_machine.handle_event({ type: EventType.COMMAND_FAILED });
+    });
+  }, 0); // Execute on next tick
 }
 
 async function clear_alarm() {
-  if (!is_connected) return;
+  if (!state_machine.can_clear_alarm()) return;
+  
+  // Send event to state machine
+  state_machine.handle_event({ type: EventType.CLEAR_ALARM_CLICKED });
   
   try {
     const response = await CncManager.reset();
@@ -838,11 +1031,30 @@ function toggle_log() {
   if (!communication_log || !toggle_log_button) return;
   
   const isVisible = communication_log.style.display === 'block';
-  communication_log.style.display = isVisible ? 'none' : 'block';
-  toggle_log_button.textContent = isVisible ? 'Show Log' : 'Hide Log';
+  const newVisibility = !isVisible;
+  
+  communication_log.style.display = newVisibility ? 'block' : 'none';
+  toggle_log_button.textContent = newVisibility ? 'Hide Log' : 'Show Log';
+  
+  // Save the state to localStorage
+  localStorage.setItem('cnc_log_visible', newVisibility.toString());
+}
+
+function restore_log_visibility() {
+  if (!communication_log || !toggle_log_button) return;
+  
+  // Get saved state from localStorage (default to visible)
+  const savedState = localStorage.getItem('cnc_log_visible');
+  const isVisible = savedState !== null ? savedState === 'true' : true;
+  
+  communication_log.style.display = isVisible ? 'block' : 'none';
+  toggle_log_button.textContent = isVisible ? 'Hide Log' : 'Show Log';
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  // Register state machine listener
+  state_machine.add_state_change_listener(handle_state_change);
+  
   // Original greet functionality
   greet_input_el = document.querySelector("#greet-input");
   greet_msg_el = document.querySelector("#greet-msg");
@@ -859,9 +1071,13 @@ window.addEventListener("DOMContentLoaded", () => {
   disconnect_button = document.getElementById("disconnect_button") as HTMLButtonElement;
   status_indicator = document.getElementById("status_indicator");
   status_text = document.getElementById("status_text");
-  machine_state = document.getElementById("machine_state");
   communication_log = document.getElementById("communication_log");
   toggle_log_button = document.getElementById("toggle_log_button") as HTMLButtonElement;
+  
+  // Status details modal elements
+  status_details_modal = document.getElementById("status_details_modal");
+  status_details_close = document.getElementById("status_details_close") as HTMLButtonElement;
+  status_details_body = document.getElementById("status_details_body");
   
   // Position display elements
   machine_x_pos = document.getElementById("machine_x_position");
@@ -927,6 +1143,23 @@ window.addEventListener("DOMContentLoaded", () => {
     toggle_log_button.addEventListener("click", toggle_log);
   }
   
+  // Status details modal events
+  if (status_text) {
+    status_text.addEventListener("click", show_status_details);
+  }
+  
+  if (status_details_close) {
+    status_details_close.addEventListener("click", hide_status_details);
+  }
+  
+  if (status_details_modal) {
+    status_details_modal.addEventListener("click", (e) => {
+      if (e.target === status_details_modal) {
+        hide_status_details();
+      }
+    });
+  }
+  
   // Jog button events
   if (jog_buttons.x_plus) jog_buttons.x_plus.addEventListener("click", () => send_jog_command("X", 1));
   if (jog_buttons.x_minus) jog_buttons.x_minus.addEventListener("click", () => send_jog_command("X", -1));
@@ -959,10 +1192,8 @@ window.addEventListener("DOMContentLoaded", () => {
   // Initial state
   update_connection_status(false);
   
-  // Start with log hidden
-  if (communication_log) {
-    communication_log.style.display = 'none';
-  }
+  // Restore log visibility from saved state
+  restore_log_visibility();
   
   // Status update with self-scheduling setTimeout to prevent backups
   function scheduleStatusUpdate() {
