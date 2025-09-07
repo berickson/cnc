@@ -1,6 +1,81 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { CncManager, CncDevice } from "./cnc-manager";
+import { CncManager, type CncDevice } from "./cnc-manager";
+import { RunStatistics, timeAsync, timeSync } from "./performance-stats";
+
+// Helper function to handle command responses with error translation
+function handleCommandResponse(response: string, successMessage: string, errorPrefix: string = ""): void {
+  const trimmedResponse = response.trim();
+  
+  if (CncManager.containsError(trimmedResponse)) {
+    const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    const message = errorPrefix ? `${errorPrefix}: ${translatedResponse}` : translatedResponse;
+    logMessage(message, 'error');
+  } else {
+    const message = successMessage.includes('${') ? 
+      successMessage.replace('${response}', trimmedResponse) : 
+      `${successMessage}: ${trimmedResponse}`;
+    logMessage(message, 'success');
+  }
+}
+
+// Performance monitoring stats
+const statusUpdateStats = new RunStatistics("CNC Status Update");
+const logMessageStats = new RunStatistics("Log Message");
+const domUpdateStats = new RunStatistics("DOM Updates");
+const networkStats = new RunStatistics("Network Calls");
+const ENABLE_PERF_LOGGING = true; // Set to false to disable performance logging
+
+// Report performance stats periodically
+function reportPerformanceStats() {
+  if (!ENABLE_PERF_LOGGING) return;
+  
+  // Write to file instead of cluttering the UI
+  const reports: string[] = [];
+  
+  if (statusUpdateStats.getCount() > 0 || networkStats.getCount() > 0 || 
+      logMessageStats.getCount() > 0 || domUpdateStats.getCount() > 0) {
+    
+    reports.push("📊 Performance Report");
+    
+    if (statusUpdateStats.getCount() > 0) {
+      reports.push(`Status: ${statusUpdateStats.toString()}`);
+      if (statusUpdateStats.mean() > 50 || statusUpdateStats.max() > 200) {
+        reports.push(`🐌 Status updates slow!`);
+      }
+    }
+    
+    if (networkStats.getCount() > 0) {
+      reports.push(`Network: ${networkStats.toString()}`);
+      if (networkStats.mean() > 100 || networkStats.max() > 500) {
+        reports.push(`🐌 Network calls slow!`);
+      }
+    }
+    
+    if (logMessageStats.getCount() > 0) {
+      reports.push(`Logging: ${logMessageStats.toString()}`);
+    }
+    
+    if (domUpdateStats.getCount() > 0) {
+      reports.push(`DOM: ${domUpdateStats.toString()}`);
+    }
+    
+    // Write all reports to file
+    for (const report of reports) {
+      invoke("write_performance_log", { message: report }).catch(console.error);
+    }
+  }
+}
+
+// Report stats every 10 seconds for testing
+setInterval(reportPerformanceStats, 10000);
+
+// Log initial startup to performance file
+if (ENABLE_PERF_LOGGING) {
+  setTimeout(() => {
+    invoke("write_performance_log", { message: "🚀 Performance monitoring started" }).catch(console.error);
+  }, 1000);
+}
 
 // Global clipboard function for use by cnc-serial.js
 (window as any).tauriCopyToClipboard = async (text: string): Promise<void> => {
@@ -63,28 +138,33 @@ async function greet() {
 }
 
 function logMessage(message: string, type: 'info' | 'error' | 'success' = 'info') {
-  if (!communicationLog) return;
-  
-  // Check for alarm codes and alarm-related messages
-  const alarmMatch = message.match(/ALARM:(\d+)/);
-  if (alarmMatch) {
-    currentAlarmCode = parseInt(alarmMatch[1]);
-  } else if (message.includes('[MSG:Check Limits]')) {
-    // This indicates a hard limit alarm (alarm code 9)
-    currentAlarmCode = 9;
-  }
-  
-  // Clear alarm code when machine returns to normal states
-  if (message.includes('<Idle|') || message.includes('ok')) {
-    currentAlarmCode = null;
-  }
-  
-  const timestamp = new Date().toLocaleTimeString();
-  const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-  const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
-  
-  communicationLog.textContent += logEntry;
-  communicationLog.scrollTop = communicationLog.scrollHeight;
+  return timeSync(logMessageStats, () => {
+    if (!communicationLog) return;
+    
+    // Check for alarm codes and alarm-related messages
+    const alarmMatch = message.match(/ALARM:(\d+)/);
+    if (alarmMatch) {
+      currentAlarmCode = parseInt(alarmMatch[1]);
+    } else if (message.includes('[MSG:Check Limits]')) {
+      // This indicates a hard limit alarm (alarm code 9)
+      currentAlarmCode = 9;
+    }
+    
+    // Clear alarm code when machine returns to normal states
+    if (message.includes('<Idle|') || message.includes('ok')) {
+      currentAlarmCode = null;
+    }
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+    const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
+    
+    // Time the expensive DOM operations
+    timeSync(domUpdateStats, () => {
+      communicationLog.textContent += logEntry;
+      communicationLog.scrollTop = communicationLog.scrollHeight;
+    });
+  });
 }
 
 // Connection state persistence
@@ -245,9 +325,10 @@ async function disconnect() {
 async function updateMachineStatus() {
   if (!isConnected) return;
   
-  try {
-    const status = await CncManager.getStatus();
-    const parsed = CncManager.parseStatus(status, lastWorkOffset);
+  return await timeAsync(statusUpdateStats, async () => {
+    try {
+      const status = await timeAsync(networkStats, () => CncManager.getStatus());
+      const parsed = CncManager.parseStatus(status, lastWorkOffset);
     
     if (parsed) {
       // Update stored work offset if this status contains WCO
@@ -304,9 +385,10 @@ async function updateMachineStatus() {
       if (workZPos) workZPos.textContent = parsed.workPosition.z.toFixed(3);
     }
     
-  } catch (error) {
-    logMessage(`Status update failed: ${error}`, 'error');
-  }
+    } catch (error) {
+      logMessage(`Status update failed: ${error}`, 'error');
+    }
+  });
 }
 
 async function sendJogCommand(axis: string, direction: number) {
@@ -317,7 +399,15 @@ async function sendJogCommand(axis: string, direction: number) {
   
   try {
     const response = await CncManager.jog(axis, distance);
-    logMessage(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${response.trim()}`);
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${trimmedResponse}`);
+    }
   } catch (error) {
     logMessage(`Jog failed: ${error}`, 'error');
   }
@@ -329,7 +419,15 @@ async function homeAllAxes() {
   try {
     logMessage("Homing all axes...");
     const response = await CncManager.home();
-    logMessage(`Home command: ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Home command: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Home command: ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Home failed: ${error}`, 'error');
   }
@@ -340,7 +438,15 @@ async function clearAlarm() {
   
   try {
     const response = await CncManager.reset();
-    logMessage(`Reset/Clear alarm: ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Reset/Clear alarm: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Reset/Clear alarm: ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Reset failed: ${error}`, 'error');
   }
@@ -351,7 +457,15 @@ async function setWorkZero(axes: string) {
   
   try {
     const response = await CncManager.setWorkZero(axes);
-    logMessage(`Set work zero ${axes}: ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Set work zero ${axes}: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Set work zero ${axes}: ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Set zero failed: ${error}`, 'error');
   }
@@ -363,7 +477,15 @@ async function goToWorkZero() {
   try {
     logMessage("Moving to work coordinate X0 Y0 (preserving Z)...");
     const response = await CncManager.sendCommand("G0 X0 Y0");
-    logMessage(`Go work zero: ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Go work zero: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Go work zero: ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Go work zero failed: ${error}`, 'error');
   }
@@ -375,7 +497,15 @@ async function goToMachineZero() {
   try {
     logMessage("Moving to machine coordinate X0 Y0 (preserving Z)...");
     const response = await CncManager.sendCommand("G53 G0 X0 Y0");
-    logMessage(`Go machine zero: ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Go machine zero: ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Go machine zero: ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Go machine zero failed: ${error}`, 'error');
   }
@@ -487,7 +617,15 @@ async function gotoSavedXyPosition(name: string) {
   try {
     // Move to the saved machine coordinates using G53 (machine coordinate system)
     const response = await CncManager.sendCommand(`G53 G0 X${coords.x} Y${coords.y}`);
-    logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${response.trim()}`, 'success');
+    const trimmedResponse = response.trim();
+    
+    // Check if response contains an error and translate it
+    if (CncManager.containsError(trimmedResponse)) {
+      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+      logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${translatedResponse}`, 'error');
+    } else {
+      logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${trimmedResponse}`, 'success');
+    }
   } catch (error) {
     logMessage(`Failed to move to "${name}": ${error}`, 'error');
   }

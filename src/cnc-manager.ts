@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { GrblErrorTranslator } from './grbl-error-translator';
 
 export interface CncDevice {
   name: string;
@@ -119,6 +120,27 @@ export class CncManager {
   }
 
   /**
+   * Translate GRBL error responses to human-readable format
+   */
+  static translateResponse(response: string): string {
+    return GrblErrorTranslator.translateError(response);
+  }
+
+  /**
+   * Check if a response contains an error or alarm
+   */
+  static containsError(response: string): boolean {
+    return GrblErrorTranslator.containsError(response);
+  }
+
+  /**
+   * Get detailed error information from a response
+   */
+  static getErrorDetails(response: string): { type: 'error' | 'alarm', code: number }[] {
+    return GrblErrorTranslator.extractErrorCodes(response);
+  }
+
+  /**
    * Parse Grbl status response
    */
   static parseStatus(statusResponse: string, lastKnownWCO?: { x: number; y: number; z: number }): {
@@ -134,21 +156,10 @@ export class CncManager {
     const alarmMatch = cleanResponse.match(/ALARM:(\d+)/);
     if (alarmMatch) {
       const alarmCode = parseInt(alarmMatch[1]);
-      const alarmDescriptions: { [key: number]: string } = {
-        1: 'Hard limit triggered during $X unlock',
-        2: 'G-code motion target exceeds machine travel',
-        3: 'Reset while in motion',
-        4: 'Probe fail',
-        5: 'Probe fail',
-        6: 'Homing fail',
-        7: 'Homing fail',
-        8: 'Homing fail',
-        9: 'Hard limit triggered',
-        10: 'Soft limit error'
-      };
+      const translatedAlarm = GrblErrorTranslator.translateAlarm(alarmCode);
       
       return {
-        state: `Alarm: ${alarmCode} (${alarmDescriptions[alarmCode] || 'Unknown alarm'})`,
+        state: translatedAlarm,
         position: { x: 0, y: 0, z: 0 },
         workPosition: { x: 0, y: 0, z: 0 }
       };
@@ -169,8 +180,9 @@ export class CncManager {
         const pins = pinMatch[1];
         // If pins contain X, Y, or Z, it's likely a hard limit alarm
         if (pins.match(/[XYZ]/)) {
+          const translatedAlarm = GrblErrorTranslator.translateAlarm(9); // Hard limit
           return {
-            state: 'Alarm: 9 (Hard limit triggered)',
+            state: translatedAlarm,
             position: { x: 0, y: 0, z: 0 },
             workPosition: { x: 0, y: 0, z: 0 }
           };
@@ -179,7 +191,7 @@ export class CncManager {
       
       // Default alarm without specific code
       return {
-        state: 'Alarm: Unknown (Check limits/position)',
+        state: 'Alarm: Unknown - Check limits, position, and GRBL status',
         position: { x: 0, y: 0, z: 0 },
         workPosition: { x: 0, y: 0, z: 0 }
       };

@@ -83,6 +83,31 @@ fn check_cnc_alarm_status(state: tauri::State<AppState>) -> Result<String, Strin
     manager.check_alarm_status().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn write_performance_log(message: String) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let log_path = "cnc_performance.log";
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let log_entry = format!("[{}] {}\n", now, message);
+    
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| e.to_string())?;
+    
+    file.write_all(log_entry.as_bytes())
+        .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -106,7 +131,8 @@ pub fn run() {
             home_cnc,
             reset_cnc,
             set_cnc_work_zero,
-            check_cnc_alarm_status
+            check_cnc_alarm_status,
+            write_performance_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
