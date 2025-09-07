@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { GrblErrorTranslator } from './grbl-error-translator';
+import { GrblErrorTranslator } from './grbl_error_translator';
 
 export interface CncDevice {
   name: string;

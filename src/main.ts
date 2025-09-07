@@ -1,63 +1,47 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { CncManager, type CncDevice } from "./cnc-manager";
-import { RunStatistics, timeAsync, timeSync } from "./performance-stats";
-
-// Helper function to handle command responses with error translation
-function handleCommandResponse(response: string, successMessage: string, errorPrefix: string = ""): void {
-  const trimmedResponse = response.trim();
-  
-  if (CncManager.containsError(trimmedResponse)) {
-    const translatedResponse = CncManager.translateResponse(trimmedResponse);
-    const message = errorPrefix ? `${errorPrefix}: ${translatedResponse}` : translatedResponse;
-    logMessage(message, 'error');
-  } else {
-    const message = successMessage.includes('${') ? 
-      successMessage.replace('${response}', trimmedResponse) : 
-      `${successMessage}: ${trimmedResponse}`;
-    logMessage(message, 'success');
-  }
-}
+import { CncManager, type CncDevice } from "./cnc_manager";
+import { RunStatistics, timeAsync, timeSync } from "./performance_stats";
 
 // Performance monitoring stats
-const statusUpdateStats = new RunStatistics("CNC Status Update");
-const logMessageStats = new RunStatistics("Log Message");
-const domUpdateStats = new RunStatistics("DOM Updates");
-const networkStats = new RunStatistics("Network Calls");
+const status_update_stats = new RunStatistics("CNC Status Update");
+const log_message_stats = new RunStatistics("Log Message");
+const dom_update_stats = new RunStatistics("DOM Updates");
+const network_stats = new RunStatistics("Network Calls");
 const ENABLE_PERF_LOGGING = true; // Set to false to disable performance logging
 
 // Report performance stats periodically
-function reportPerformanceStats() {
+function report_performance_stats() {
   if (!ENABLE_PERF_LOGGING) return;
   
   // Write to file instead of cluttering the UI
   const reports: string[] = [];
   
-  if (statusUpdateStats.getCount() > 0 || networkStats.getCount() > 0 || 
-      logMessageStats.getCount() > 0 || domUpdateStats.getCount() > 0) {
+  if (status_update_stats.getCount() > 0 || network_stats.getCount() > 0 || 
+      log_message_stats.getCount() > 0 || dom_update_stats.getCount() > 0) {
     
     reports.push("📊 Performance Report");
     
-    if (statusUpdateStats.getCount() > 0) {
-      reports.push(`Status: ${statusUpdateStats.toString()}`);
-      if (statusUpdateStats.mean() > 50 || statusUpdateStats.max() > 200) {
+    if (status_update_stats.getCount() > 0) {
+      reports.push(`Status: ${status_update_stats.toString()}`);
+      if (status_update_stats.mean() > 50 || status_update_stats.max() > 200) {
         reports.push(`🐌 Status updates slow!`);
       }
     }
     
-    if (networkStats.getCount() > 0) {
-      reports.push(`Network: ${networkStats.toString()}`);
-      if (networkStats.mean() > 100 || networkStats.max() > 500) {
+    if (network_stats.getCount() > 0) {
+      reports.push(`Network: ${network_stats.toString()}`);
+      if (network_stats.mean() > 100 || network_stats.max() > 500) {
         reports.push(`🐌 Network calls slow!`);
       }
     }
     
-    if (logMessageStats.getCount() > 0) {
-      reports.push(`Logging: ${logMessageStats.toString()}`);
+    if (log_message_stats.getCount() > 0) {
+      reports.push(`Logging: ${log_message_stats.toString()}`);
     }
     
-    if (domUpdateStats.getCount() > 0) {
-      reports.push(`DOM: ${domUpdateStats.toString()}`);
+    if (dom_update_stats.getCount() > 0) {
+      reports.push(`DOM: ${dom_update_stats.toString()}`);
     }
     
     // Write all reports to file
@@ -68,7 +52,7 @@ function reportPerformanceStats() {
 }
 
 // Report stats every 10 seconds for testing
-setInterval(reportPerformanceStats, 10000);
+setInterval(report_performance_stats, 10000);
 
 // Log initial startup to performance file
 if (ENABLE_PERF_LOGGING) {
@@ -91,78 +75,80 @@ if (ENABLE_PERF_LOGGING) {
   }
 };
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+let greet_input_el: HTMLInputElement | null;
+let greet_msg_el: HTMLElement | null;
 
 // CNC-related elements
-let connectButton: HTMLButtonElement | null;
-let disconnectButton: HTMLButtonElement | null;
-let statusIndicator: HTMLElement | null;
-let statusText: HTMLElement | null;
-let machineState: HTMLElement | null;
-let communicationLog: HTMLElement | null;
-let toggleLogButton: HTMLButtonElement | null;
+let connect_button: HTMLButtonElement | null;
+let disconnect_button: HTMLButtonElement | null;
+let status_indicator: HTMLElement | null;
+let status_text: HTMLElement | null;
+let machine_state: HTMLElement | null;
+let communication_log: HTMLElement | null;
+let toggle_log_button: HTMLButtonElement | null;
 
 // Position display elements
-let machineXPos: HTMLElement | null;
-let machineYPos: HTMLElement | null;
-let machineZPos: HTMLElement | null;
-let workXPos: HTMLElement | null;
-let workYPos: HTMLElement | null;
-let workZPos: HTMLElement | null;
+let machine_x_pos: HTMLElement | null;
+let machine_y_pos: HTMLElement | null;
+let machine_z_pos: HTMLElement | null;
+let work_x_pos: HTMLElement | null;
+let work_y_pos: HTMLElement | null;
+let work_z_pos: HTMLElement | null;
 
 // Control elements
-let homeButton: HTMLButtonElement | null;
-let clearAlarmButton: HTMLButtonElement | null;
-let copyLogButton: HTMLButtonElement | null;
-let jogButtons: { [key: string]: HTMLButtonElement | null } = {};
-let stepSizeInput: HTMLInputElement | null;
-let zeroButtons: { [key: string]: HTMLButtonElement | null } = {};
+let home_button: HTMLButtonElement | null;
+let clear_alarm_button: HTMLButtonElement | null;
+let copy_log_button: HTMLButtonElement | null;
+let jog_buttons: { [key: string]: HTMLButtonElement | null } = {};
+let step_size_input: HTMLInputElement | null;
+let zero_buttons: { [key: string]: HTMLButtonElement | null } = {};
 
 // Save XY preset elements
-let saveXyPresetButton: HTMLButtonElement | null;
-let xyPresetsList: HTMLElement | null;
+let save_xy_preset_button: HTMLButtonElement | null;
+let xy_presets_list: HTMLElement | null;
 
-let isConnected = false;
-let discoveredDevices: CncDevice[] = [];
-let lastWorkOffset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
-let currentAlarmCode: number | null = null; // Track current alarm code
-let savedXyCoordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
+let is_connected = false;
+let discovered_devices: CncDevice[] = [];
+let last_work_offset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
+let current_alarm_code: number | null = null; // Track current alarm code
+let saved_xy_coordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
 
 async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
+  if (greet_msg_el && greet_input_el) {
+    greet_msg_el.textContent = await invoke("greet", {
+      name: greet_input_el.value,
     });
   }
 }
 
-function logMessage(message: string, type: 'info' | 'error' | 'success' = 'info') {
-  return timeSync(logMessageStats, () => {
-    if (!communicationLog) return;
+function log_message(message: string, type: 'info' | 'error' | 'success' = 'info') {
+  return timeSync(log_message_stats, () => {
+    if (!communication_log) return;
     
     // Check for alarm codes and alarm-related messages
-    const alarmMatch = message.match(/ALARM:(\d+)/);
-    if (alarmMatch) {
-      currentAlarmCode = parseInt(alarmMatch[1]);
+    const alarm_match = message.match(/ALARM:(\d+)/);
+    if (alarm_match) {
+      current_alarm_code = parseInt(alarm_match[1]);
     } else if (message.includes('[MSG:Check Limits]')) {
       // This indicates a hard limit alarm (alarm code 9)
-      currentAlarmCode = 9;
+      current_alarm_code = 9;
     }
     
     // Clear alarm code when machine returns to normal states
     if (message.includes('<Idle|') || message.includes('ok')) {
-      currentAlarmCode = null;
+      current_alarm_code = null;
     }
     
     const timestamp = new Date().toLocaleTimeString();
     const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-    const logEntry = `[${timestamp}] ${prefix} ${message}\n`;
+    const log_entry = `[${timestamp}] ${prefix} ${message}\n`;
     
     // Time the expensive DOM operations
-    timeSync(domUpdateStats, () => {
-      communicationLog.textContent += logEntry;
-      communicationLog.scrollTop = communicationLog.scrollHeight;
+    timeSync(dom_update_stats, () => {
+      if (communication_log) {
+        communication_log.textContent += log_entry;
+        communication_log.scrollTop = communication_log.scrollHeight;
+      }
     });
   });
 }
@@ -181,7 +167,7 @@ function saveLastConnection(device: CncDevice) {
     timestamp: new Date().toISOString()
   };
   localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(savedConnection));
-  logMessage(`Saved connection settings for ${device.name}`, 'info');
+  log_message(`Saved connection settings for ${device.name}`, 'info');
 }
 
 function loadLastConnection(): CncDevice | null {
@@ -205,14 +191,14 @@ function clearLastConnection() {
 async function attemptAutoReconnect(): Promise<boolean> {
   const lastConnection = loadLastConnection();
   if (lastConnection) {
-    logMessage(`Attempting to reconnect to ${lastConnection.name} at ${lastConnection.ip}:${lastConnection.port}`, 'info');
+    log_message(`Attempting to reconnect to ${lastConnection.name} at ${lastConnection.ip}:${lastConnection.port}`, 'info');
     try {
       await CncManager.connect(lastConnection);
-      updateConnectionStatus(true, lastConnection);
-      logMessage('Auto-reconnect successful', 'success');
+      update_connection_status(true, lastConnection);
+      log_message('Auto-reconnect successful', 'success');
       return true;
     } catch (error) {
-      logMessage(`Auto-reconnect failed: ${error}`, 'error');
+      log_message(`Auto-reconnect failed: ${error}`, 'error');
       // Keep the saved connection for future attempts - user can use discovery if needed
       return false;
     }
@@ -220,68 +206,68 @@ async function attemptAutoReconnect(): Promise<boolean> {
   return false;
 }
 
-function updateConnectionStatus(connected: boolean, deviceInfo?: CncDevice) {
-  isConnected = connected;
+function update_connection_status(connected: boolean, deviceInfo?: CncDevice) {
+  is_connected = connected;
   
-  if (statusIndicator) {
-    statusIndicator.className = `status-indicator ${connected ? 'connected' : ''}`;
+  if (status_indicator) {
+    status_indicator.className = `status-indicator ${connected ? 'connected' : ''}`;
   }
   
-  if (statusText) {
+  if (status_text) {
     if (connected && deviceInfo) {
-      statusText.textContent = `Connected to ${deviceInfo.name} (${deviceInfo.ip}:${deviceInfo.port})`;
+      status_text.textContent = `Connected to ${deviceInfo.name} (${deviceInfo.ip}:${deviceInfo.port})`;
     } else {
-      statusText.textContent = 'Disconnected';
+      status_text.textContent = 'Disconnected';
     }
   }
   
   // Update button states
-  if (connectButton) connectButton.disabled = connected;
-  if (disconnectButton) disconnectButton.disabled = !connected;
-  if (clearAlarmButton) clearAlarmButton.disabled = !connected;
-  if (homeButton) homeButton.disabled = !connected;
-  if (saveXyPresetButton) saveXyPresetButton.disabled = !connected;
+  if (connect_button) connect_button.disabled = connected;
+  if (disconnect_button) disconnect_button.disabled = !connected;
+  if (clear_alarm_button) clear_alarm_button.disabled = !connected;
+  if (home_button) home_button.disabled = !connected;
+  if (save_xy_preset_button) save_xy_preset_button.disabled = !connected;
   
   // Update jog buttons
-  Object.values(jogButtons).forEach(button => {
+  Object.values(jog_buttons).forEach(button => {
     if (button) button.disabled = !connected;
   });
   
   // Update zero buttons
-  Object.values(zeroButtons).forEach(button => {
+  Object.values(zero_buttons).forEach(button => {
     if (button) button.disabled = !connected;
   });
 }
 
-async function discoverAndConnect() {
-  logMessage("Starting CNC device discovery...");
-  connectButton!.textContent = "Discovering...";
-  connectButton!.disabled = true;
+async function discover_and_connect() {
+  log_message("Starting CNC device discovery...");
+  connect_button!.textContent = "Discovering...";
+  connect_button!.disabled = true;
   
   try {
-    discoveredDevices = await CncManager.discoverDevices();
-    logMessage(`Found ${discoveredDevices.length} potential CNC device(s)`);
+    discovered_devices = await CncManager.discoverDevices();
+    log_message(`Found ${discovered_devices.length} potential CNC device(s)`);
     
-    if (discoveredDevices.length === 0) {
-      logMessage("No CNC devices found. Make sure your Genmitsu WiFi module is connected and powered on.", 'error');
+    if (discovered_devices.length === 0) {
+      log_message("No CNC devices found. Make sure your Genmitsu WiFi module is connected and powered on.", 'error');
       return;
     }
     
     // For now, connect to the first device found
     // In a full implementation, you might want to show a device selection dialog
-    const device = discoveredDevices[0];
-    logMessage(`Attempting to connect to ${device.name} at ${device.ip}:${device.port}`);
+    const device = discovered_devices[0];
+    log_message(`Attempting to connect to ${device.name} at ${device.ip}:${device.port}`);
     
     await CncManager.connect(device);
-    updateConnectionStatus(true, device);
+    update_connection_status(true, device);
     saveLastConnection(device); // Save successful connection
-    logMessage(`Successfully connected to ${device.name}`, 'success');
+    log_message(`Successfully connected to ${device.name}`, 'success');
     
     // Check for alarm status immediately after connecting
     try {
-      logMessage("Checking initial alarm status...", 'info');
+      log_message("Checking initial alarm status...", 'info');
       const alarmStatus = await CncManager.checkAlarmStatus();
-      logMessage(`Initial alarm status check result: ${alarmStatus}`, 'info');
+      log_message(`Initial alarm status check result: ${alarmStatus}`, 'info');
       
       // Parse the status response to extract alarm information
       const parsed = CncManager.parseStatus(alarmStatus);
@@ -289,55 +275,55 @@ async function discoverAndConnect() {
         // Extract alarm code from parsed state like "Alarm: 9 (Hard limit triggered)"
         const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
         if (alarmMatch) {
-          currentAlarmCode = parseInt(alarmMatch[1]);
-          logMessage(`Detected alarm code on connect: ${currentAlarmCode}`, 'error');
+          current_alarm_code = parseInt(alarmMatch[1]);
+          log_message(`Detected alarm code on connect: ${current_alarm_code}`, 'error');
         }
       }
     } catch (alarmError) {
-      logMessage(`Could not check alarm status on connect: ${alarmError}`, 'error');
+      log_message(`Could not check alarm status on connect: ${alarmError}`, 'error');
     }
     
     // Get initial status
     await updateMachineStatus();
     
   } catch (error) {
-    logMessage(`Connection failed: ${error}`, 'error');
-    updateConnectionStatus(false);
+    log_message(`Connection failed: ${error}`, 'error');
+    update_connection_status(false);
     // Don't clear saved connection on discovery/connect failure - might be temporary
   } finally {
-    connectButton!.textContent = "Connect";
-    connectButton!.disabled = false;
+    connect_button!.textContent = "Connect";
+    connect_button!.disabled = false;
   }
 }
 
 async function disconnect() {
   try {
     await CncManager.disconnect();
-    updateConnectionStatus(false);
-    lastWorkOffset = { x: 0, y: 0, z: 0 }; // Reset work offset
+    update_connection_status(false);
+    last_work_offset = { x: 0, y: 0, z: 0 }; // Reset work offset
     clearLastConnection(); // Clear saved connection on manual disconnect
-    logMessage("Disconnected from CNC", 'success');
+    log_message("Disconnected from CNC", 'success');
   } catch (error) {
-    logMessage(`Disconnect error: ${error}`, 'error');
+    log_message(`Disconnect error: ${error}`, 'error');
   }
 }
 
 async function updateMachineStatus() {
-  if (!isConnected) return;
+  if (!is_connected) return;
   
-  return await timeAsync(statusUpdateStats, async () => {
+  return await timeAsync(status_update_stats, async () => {
     try {
-      const status = await timeAsync(networkStats, () => CncManager.getStatus());
-      const parsed = CncManager.parseStatus(status, lastWorkOffset);
+      const status = await timeAsync(network_stats, () => CncManager.getStatus());
+      const parsed = CncManager.parseStatus(status, last_work_offset);
     
     if (parsed) {
       // Update stored work offset if this status contains WCO
       if ((parsed as any).workOffset) {
-        lastWorkOffset = (parsed as any).workOffset;
+        last_work_offset = (parsed as any).workOffset;
       }
       
       // Update machine state
-      if (machineState) {
+      if (machine_state) {
         let displayState = parsed.state;
         
         // Extract alarm code from parsed state if present
@@ -349,9 +335,9 @@ async function updateMachineStatus() {
           // Also update our tracked alarm code
           const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
           if (alarmMatch) {
-            currentAlarmCode = parseInt(alarmMatch[1]);
+            current_alarm_code = parseInt(alarmMatch[1]);
           }
-        } else if (parsed.state.includes('Alarm') && currentAlarmCode !== null) {
+        } else if (parsed.state.includes('Alarm') && current_alarm_code !== null) {
           // Fallback: if we just have "Alarm" but have a tracked code, show details
           const alarmDescriptions: { [key: number]: string } = {
             1: 'Hard limit during unlock',
@@ -365,36 +351,36 @@ async function updateMachineStatus() {
             9: 'Hard limit triggered',
             10: 'Soft limit error'
           };
-          displayState = `Alarm: ${currentAlarmCode} (${alarmDescriptions[currentAlarmCode] || 'Unknown'})`;
+          displayState = `Alarm: ${current_alarm_code} (${alarmDescriptions[current_alarm_code] || 'Unknown'})`;
         } else {
           // Clear alarm code if not in alarm state
-          currentAlarmCode = null;
+          current_alarm_code = null;
         }
         
-        machineState.textContent = displayState;
-        machineState.style.color = parsed.state === 'Idle' ? '#28a745' : 
+        machine_state.textContent = displayState;
+        machine_state.style.color = parsed.state === 'Idle' ? '#28a745' : 
                                    parsed.state.includes('Alarm') ? '#dc3545' : '#ffc107';
       }
       
       // Update position displays
-      if (machineXPos) machineXPos.textContent = parsed.position.x.toFixed(3);
-      if (machineYPos) machineYPos.textContent = parsed.position.y.toFixed(3);
-      if (machineZPos) machineZPos.textContent = parsed.position.z.toFixed(3);
-      if (workXPos) workXPos.textContent = parsed.workPosition.x.toFixed(3);
-      if (workYPos) workYPos.textContent = parsed.workPosition.y.toFixed(3);
-      if (workZPos) workZPos.textContent = parsed.workPosition.z.toFixed(3);
+      if (machine_x_pos) machine_x_pos.textContent = parsed.position.x.toFixed(3);
+      if (machine_y_pos) machine_y_pos.textContent = parsed.position.y.toFixed(3);
+      if (machine_z_pos) machine_z_pos.textContent = parsed.position.z.toFixed(3);
+      if (work_x_pos) work_x_pos.textContent = parsed.workPosition.x.toFixed(3);
+      if (work_y_pos) work_y_pos.textContent = parsed.workPosition.y.toFixed(3);
+      if (work_z_pos) work_z_pos.textContent = parsed.workPosition.z.toFixed(3);
     }
     
     } catch (error) {
-      logMessage(`Status update failed: ${error}`, 'error');
+      log_message(`Status update failed: ${error}`, 'error');
     }
   });
 }
 
-async function sendJogCommand(axis: string, direction: number) {
-  if (!isConnected) return;
+async function send_jog_command(axis: string, direction: number) {
+  if (!is_connected) return;
   
-  const stepSize = parseFloat(stepSizeInput!.value);
+  const stepSize = parseFloat(step_size_input!.value);
   const distance = stepSize * direction;
   
   try {
@@ -404,37 +390,37 @@ async function sendJogCommand(axis: string, direction: number) {
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${translatedResponse}`, 'error');
+      log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${trimmedResponse}`);
+      log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${trimmedResponse}`);
     }
   } catch (error) {
-    logMessage(`Jog failed: ${error}`, 'error');
+    log_message(`Jog failed: ${error}`, 'error');
   }
 }
 
-async function homeAllAxes() {
-  if (!isConnected) return;
+async function home_all_axes() {
+  if (!is_connected) return;
   
   try {
-    logMessage("Homing all axes...");
+    log_message("Homing all axes...");
     const response = await CncManager.home();
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Home command: ${translatedResponse}`, 'error');
+      log_message(`Home command: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Home command: ${trimmedResponse}`, 'success');
+      log_message(`Home command: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Home failed: ${error}`, 'error');
+    log_message(`Home failed: ${error}`, 'error');
   }
 }
 
-async function clearAlarm() {
-  if (!isConnected) return;
+async function clear_alarm() {
+  if (!is_connected) return;
   
   try {
     const response = await CncManager.reset();
@@ -443,17 +429,17 @@ async function clearAlarm() {
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Reset/Clear alarm: ${translatedResponse}`, 'error');
+      log_message(`Reset/Clear alarm: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Reset/Clear alarm: ${trimmedResponse}`, 'success');
+      log_message(`Reset/Clear alarm: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Reset failed: ${error}`, 'error');
+    log_message(`Reset failed: ${error}`, 'error');
   }
 }
 
-async function setWorkZero(axes: string) {
-  if (!isConnected) return;
+async function set_work_zero(axes: string) {
+  if (!is_connected) return;
   
   try {
     const response = await CncManager.setWorkZero(axes);
@@ -462,83 +448,83 @@ async function setWorkZero(axes: string) {
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Set work zero ${axes}: ${translatedResponse}`, 'error');
+      log_message(`Set work zero ${axes}: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Set work zero ${axes}: ${trimmedResponse}`, 'success');
+      log_message(`Set work zero ${axes}: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Set zero failed: ${error}`, 'error');
+    log_message(`Set zero failed: ${error}`, 'error');
   }
 }
 
-async function goToWorkZero() {
-  if (!isConnected) return;
+async function go_to_work_zero() {
+  if (!is_connected) return;
   
   try {
-    logMessage("Moving to work coordinate X0 Y0 (preserving Z)...");
+    log_message("Moving to work coordinate X0 Y0 (preserving Z)...");
     const response = await CncManager.sendCommand("G0 X0 Y0");
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Go work zero: ${translatedResponse}`, 'error');
+      log_message(`Go work zero: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Go work zero: ${trimmedResponse}`, 'success');
+      log_message(`Go work zero: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Go work zero failed: ${error}`, 'error');
+    log_message(`Go work zero failed: ${error}`, 'error');
   }
 }
 
-async function goToMachineZero() {
-  if (!isConnected) return;
+async function go_to_machine_zero() {
+  if (!is_connected) return;
   
   try {
-    logMessage("Moving to machine coordinate X0 Y0 (preserving Z)...");
+    log_message("Moving to machine coordinate X0 Y0 (preserving Z)...");
     const response = await CncManager.sendCommand("G53 G0 X0 Y0");
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Go machine zero: ${translatedResponse}`, 'error');
+      log_message(`Go machine zero: ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Go machine zero: ${trimmedResponse}`, 'success');
+      log_message(`Go machine zero: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Go machine zero failed: ${error}`, 'error');
+    log_message(`Go machine zero failed: ${error}`, 'error');
   }
 }
 
-async function copyLog() {
-  if (!communicationLog) return;
+async function copy_log() {
+  if (!communication_log) return;
   
-  const text = communicationLog.textContent || '';
+  const text = communication_log.textContent || '';
   
   try {
     await (window as any).tauriCopyToClipboard(text);
     
     // Temporarily change button text to show success
-    if (copyLogButton) {
-      const originalText = copyLogButton.textContent;
-      copyLogButton.textContent = 'Copied!';
+    if (copy_log_button) {
+      const originalText = copy_log_button.textContent;
+      copy_log_button.textContent = 'Copied!';
       setTimeout(() => {
-        if (copyLogButton) copyLogButton.textContent = originalText;
+        if (copy_log_button) copy_log_button.textContent = originalText;
       }, 1000);
     }
   } catch (error) {
-    logMessage(`Failed to copy log: ${error}`, 'error');
+    log_message(`Failed to copy log: ${error}`, 'error');
   }
 }
 
 // Load saved XY coordinates from localStorage
-function loadSavedXyCoordinates() {
+function load_saved_xy_coordinates() {
   try {
     const saved = localStorage.getItem('cnc_xy_coordinates');
     return saved ? JSON.parse(saved) : {};
   } catch (error) {
-    logMessage('Failed to load saved XY coordinates', 'error');
+    log_message('Failed to load saved XY coordinates', 'error');
     return {};
   }
 }
@@ -546,33 +532,33 @@ function loadSavedXyCoordinates() {
 // Save XY coordinates to localStorage
 function saveXyCoordinates() {
   try {
-    localStorage.setItem('cnc_xy_coordinates', JSON.stringify(savedXyCoordinates));
-    logMessage('XY coordinates saved');
+    localStorage.setItem('cnc_xy_coordinates', JSON.stringify(saved_xy_coordinates));
+    log_message('XY coordinates saved');
   } catch (error) {
-    logMessage('Failed to save XY coordinates', 'error');
+    log_message('Failed to save XY coordinates', 'error');
   }
 }
 
 // Save current XY position as a preset (using machine coordinates)
-async function saveCurrentXyPosition(name?: string) {
-  if (!isConnected) {
-    logMessage('Not connected to CNC', 'error');
+async function save_current_xy_position(name?: string) {
+  if (!is_connected) {
+    log_message('Not connected to CNC', 'error');
     return;
   }
 
   // Get current machine status to get accurate machine coordinates
   try {
     const status = await CncManager.getStatus();
-    const parsed = CncManager.parseStatus(status, lastWorkOffset);
+    const parsed = CncManager.parseStatus(status, last_work_offset);
     
     if (!parsed) {
-      logMessage('Could not get current position', 'error');
+      log_message('Could not get current position', 'error');
       return;
     }
 
     // Auto-generate name if not provided
     if (!name) {
-      const existingPresets = Object.keys(savedXyCoordinates);
+      const existingPresets = Object.keys(saved_xy_coordinates);
       let presetNumber = 1;
       let generatedName;
       
@@ -586,31 +572,31 @@ async function saveCurrentXyPosition(name?: string) {
     }
 
     // Save machine coordinates (absolute positions for fixtures/vises/tooling)
-    savedXyCoordinates[name] = {
+    saved_xy_coordinates[name] = {
       x: parsed.position.x,  // Machine coordinates
       y: parsed.position.y,  // Machine coordinates
       timestamp: new Date().toISOString()
     };
 
     saveXyCoordinates();
-    logMessage(`Saved machine XY position "${name}": X${parsed.position.x.toFixed(3)} Y${parsed.position.y.toFixed(3)}`, 'success');
+    log_message(`Saved machine XY position "${name}": X${parsed.position.x.toFixed(3)} Y${parsed.position.y.toFixed(3)}`, 'success');
     updateXyPresetsUi();
     
   } catch (error) {
-    logMessage(`Failed to save XY position: ${error}`, 'error');
+    log_message(`Failed to save XY position: ${error}`, 'error');
   }
 }
 
 // Go to a saved XY position
 async function gotoSavedXyPosition(name: string) {
-  const coords = savedXyCoordinates[name];
+  const coords = saved_xy_coordinates[name];
   if (!coords) {
-    logMessage(`XY position "${name}" not found`, 'error');
+    log_message(`XY position "${name}" not found`, 'error');
     return;
   }
 
-  if (!isConnected) {
-    logMessage('Not connected to CNC', 'error');
+  if (!is_connected) {
+    log_message('Not connected to CNC', 'error');
     return;
   }
 
@@ -622,28 +608,28 @@ async function gotoSavedXyPosition(name: string) {
     // Check if response contains an error and translate it
     if (CncManager.containsError(trimmedResponse)) {
       const translatedResponse = CncManager.translateResponse(trimmedResponse);
-      logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${translatedResponse}`, 'error');
+      log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${translatedResponse}`, 'error');
     } else {
-      logMessage(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${trimmedResponse}`, 'success');
+      log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${trimmedResponse}`, 'success');
     }
   } catch (error) {
-    logMessage(`Failed to move to "${name}": ${error}`, 'error');
+    log_message(`Failed to move to "${name}": ${error}`, 'error');
   }
 }
 
 // Delete a saved XY position
 function deleteSavedXyPosition(name: string) {
-  if (savedXyCoordinates[name]) {
-    delete savedXyCoordinates[name];
+  if (saved_xy_coordinates[name]) {
+    delete saved_xy_coordinates[name];
     saveXyCoordinates();
-    logMessage(`Deleted XY position "${name}"`, 'success');
+    log_message(`Deleted XY position "${name}"`, 'success');
     updateXyPresetsUi();
   }
 }
 
 // Edit a saved XY position
 function editSavedXyPosition(oldName: string) {
-  const coords = savedXyCoordinates[oldName];
+  const coords = saved_xy_coordinates[oldName];
   if (!coords) return;
   
   // Create modal dialog
@@ -697,25 +683,25 @@ function editSavedXyPosition(oldName: string) {
     }
     
     // Check if new name already exists (and it's different from current)
-    if (newName !== oldName && savedXyCoordinates[newName]) {
+    if (newName !== oldName && saved_xy_coordinates[newName]) {
       alert(`Preset "${newName}" already exists!`);
       return;
     }
     
     // Remove old entry if name changed
     if (newName !== oldName) {
-      delete savedXyCoordinates[oldName];
+      delete saved_xy_coordinates[oldName];
     }
     
     // Save with new values
-    savedXyCoordinates[newName] = { 
+    saved_xy_coordinates[newName] = { 
       x: newX, 
       y: newY, 
       timestamp: new Date().toISOString() 
     };
     
     saveXyCoordinates();
-    logMessage(`Updated preset "${newName}"`, 'success');
+    log_message(`Updated preset "${newName}"`, 'success');
     updateXyPresetsUi();
     document.body.removeChild(overlay);
   });
@@ -739,11 +725,11 @@ function editSavedXyPosition(oldName: string) {
 
 // Update the XY presets UI
 function updateXyPresetsUi() {
-  if (!xyPresetsList) return;
+  if (!xy_presets_list) return;
 
-  xyPresetsList.innerHTML = '';
+  xy_presets_list.innerHTML = '';
   
-  Object.entries(savedXyCoordinates).forEach(([name, coords]) => {
+  Object.entries(saved_xy_coordinates).forEach(([name, coords]) => {
     const presetDiv = document.createElement('div');
     presetDiv.style.cssText = 'display: flex; gap: 4px; align-items: center; margin: 2px 0;';
     
@@ -774,8 +760,8 @@ function updateXyPresetsUi() {
     presetDiv.appendChild(gotoButton);
     presetDiv.appendChild(renameButton);
     presetDiv.appendChild(deleteButton);
-    if (xyPresetsList) {
-      xyPresetsList.appendChild(presetDiv);
+    if (xy_presets_list) {
+      xy_presets_list.appendChild(presetDiv);
     }
   });
 }
@@ -791,24 +777,24 @@ function setupStepSizeButtons() {
     const button = document.getElementById(id) as HTMLButtonElement;
     if (button) {
       button.addEventListener('click', () => {
-        if (stepSizeInput) stepSizeInput.value = value.toString();
+        if (step_size_input) step_size_input.value = value.toString();
       });
     }
   });
 }
 
-function toggleLog() {
-  if (!communicationLog || !toggleLogButton) return;
+function toggle_log() {
+  if (!communication_log || !toggle_log_button) return;
   
-  const isVisible = communicationLog.style.display === 'block';
-  communicationLog.style.display = isVisible ? 'none' : 'block';
-  toggleLogButton.textContent = isVisible ? 'Show Log' : 'Hide Log';
+  const isVisible = communication_log.style.display === 'block';
+  communication_log.style.display = isVisible ? 'none' : 'block';
+  toggle_log_button.textContent = isVisible ? 'Show Log' : 'Hide Log';
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   // Original greet functionality
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
+  greet_input_el = document.querySelector("#greet-input");
+  greet_msg_el = document.querySelector("#greet-msg");
   const greetForm = document.querySelector("#greet-form");
   if (greetForm) {
     greetForm.addEventListener("submit", (e) => {
@@ -818,34 +804,34 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   
   // CNC UI elements
-  connectButton = document.getElementById("connect_button") as HTMLButtonElement;
-  disconnectButton = document.getElementById("disconnect_button") as HTMLButtonElement;
-  statusIndicator = document.getElementById("status_indicator");
-  statusText = document.getElementById("status_text");
-  machineState = document.getElementById("machine_state");
-  communicationLog = document.getElementById("communication_log");
-  toggleLogButton = document.getElementById("toggle_log_button") as HTMLButtonElement;
+  connect_button = document.getElementById("connect_button") as HTMLButtonElement;
+  disconnect_button = document.getElementById("disconnect_button") as HTMLButtonElement;
+  status_indicator = document.getElementById("status_indicator");
+  status_text = document.getElementById("status_text");
+  machine_state = document.getElementById("machine_state");
+  communication_log = document.getElementById("communication_log");
+  toggle_log_button = document.getElementById("toggle_log_button") as HTMLButtonElement;
   
   // Position display elements
-  machineXPos = document.getElementById("machine_x_position");
-  machineYPos = document.getElementById("machine_y_position");
-  machineZPos = document.getElementById("machine_z_position");
-  workXPos = document.getElementById("work_x_position");
-  workYPos = document.getElementById("work_y_position");
-  workZPos = document.getElementById("work_z_position");
+  machine_x_pos = document.getElementById("machine_x_position");
+  machine_y_pos = document.getElementById("machine_y_position");
+  machine_z_pos = document.getElementById("machine_z_position");
+  work_x_pos = document.getElementById("work_x_position");
+  work_y_pos = document.getElementById("work_y_position");
+  work_z_pos = document.getElementById("work_z_position");
   
   // Control elements
-  homeButton = document.getElementById("home_button") as HTMLButtonElement;
-  clearAlarmButton = document.getElementById("clear_alarm_button") as HTMLButtonElement;
-  copyLogButton = document.getElementById("copy_log_button") as HTMLButtonElement;
-  stepSizeInput = document.getElementById("step_size_input") as HTMLInputElement;
+  home_button = document.getElementById("home_button") as HTMLButtonElement;
+  clear_alarm_button = document.getElementById("clear_alarm_button") as HTMLButtonElement;
+  copy_log_button = document.getElementById("copy_log_button") as HTMLButtonElement;
+  step_size_input = document.getElementById("step_size_input") as HTMLInputElement;
   
   // Save XY preset elements
-  saveXyPresetButton = document.getElementById("save_xy_preset_button") as HTMLButtonElement;
-  xyPresetsList = document.getElementById("xy_presets_list");
+  save_xy_preset_button = document.getElementById("save_xy_preset_button") as HTMLButtonElement;
+  xy_presets_list = document.getElementById("xy_presets_list");
   
   // Jog buttons
-  jogButtons = {
+  jog_buttons = {
     'x_plus': document.getElementById("jog_x_plus_button") as HTMLButtonElement,
     'x_minus': document.getElementById("jog_x_minus_button") as HTMLButtonElement,
     'y_plus': document.getElementById("jog_y_plus_button") as HTMLButtonElement,
@@ -855,7 +841,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   
   // Zero buttons
-  zeroButtons = {
+  zero_buttons = {
     'all': document.getElementById("zero_all_button") as HTMLButtonElement,
     'x': document.getElementById("zero_x_button") as HTMLButtonElement,
     'y': document.getElementById("zero_y_button") as HTMLButtonElement,
@@ -866,71 +852,71 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   
   // Event listeners
-  if (connectButton) {
-    connectButton.addEventListener("click", discoverAndConnect);
+  if (connect_button) {
+    connect_button.addEventListener("click", discover_and_connect);
   }
   
-  if (disconnectButton) {
-    disconnectButton.addEventListener("click", disconnect);
+  if (disconnect_button) {
+    disconnect_button.addEventListener("click", disconnect);
   }
   
-  if (homeButton) {
-    homeButton.addEventListener("click", homeAllAxes);
+  if (home_button) {
+    home_button.addEventListener("click", home_all_axes);
   }
   
-  if (clearAlarmButton) {
-    clearAlarmButton.addEventListener("click", clearAlarm);
+  if (clear_alarm_button) {
+    clear_alarm_button.addEventListener("click", clear_alarm);
   }
   
-  if (copyLogButton) {
-    copyLogButton.addEventListener("click", copyLog);
+  if (copy_log_button) {
+    copy_log_button.addEventListener("click", copy_log);
   }
   
-  if (toggleLogButton) {
-    toggleLogButton.addEventListener("click", toggleLog);
+  if (toggle_log_button) {
+    toggle_log_button.addEventListener("click", toggle_log);
   }
   
   // Jog button events
-  if (jogButtons.x_plus) jogButtons.x_plus.addEventListener("click", () => sendJogCommand("X", 1));
-  if (jogButtons.x_minus) jogButtons.x_minus.addEventListener("click", () => sendJogCommand("X", -1));
-  if (jogButtons.y_plus) jogButtons.y_plus.addEventListener("click", () => sendJogCommand("Y", 1));
-  if (jogButtons.y_minus) jogButtons.y_minus.addEventListener("click", () => sendJogCommand("Y", -1));
-  if (jogButtons.z_plus) jogButtons.z_plus.addEventListener("click", () => sendJogCommand("Z", 1));
-  if (jogButtons.z_minus) jogButtons.z_minus.addEventListener("click", () => sendJogCommand("Z", -1));
+  if (jog_buttons.x_plus) jog_buttons.x_plus.addEventListener("click", () => send_jog_command("X", 1));
+  if (jog_buttons.x_minus) jog_buttons.x_minus.addEventListener("click", () => send_jog_command("X", -1));
+  if (jog_buttons.y_plus) jog_buttons.y_plus.addEventListener("click", () => send_jog_command("Y", 1));
+  if (jog_buttons.y_minus) jog_buttons.y_minus.addEventListener("click", () => send_jog_command("Y", -1));
+  if (jog_buttons.z_plus) jog_buttons.z_plus.addEventListener("click", () => send_jog_command("Z", 1));
+  if (jog_buttons.z_minus) jog_buttons.z_minus.addEventListener("click", () => send_jog_command("Z", -1));
   
   // Zero button events
-  if (zeroButtons.all) zeroButtons.all.addEventListener("click", () => setWorkZero("X0Y0Z0"));
-  if (zeroButtons.x) zeroButtons.x.addEventListener("click", () => setWorkZero("X0"));
-  if (zeroButtons.y) zeroButtons.y.addEventListener("click", () => setWorkZero("Y0"));
-  if (zeroButtons.z) zeroButtons.z.addEventListener("click", () => setWorkZero("Z0"));
-  if (zeroButtons.xy) zeroButtons.xy.addEventListener("click", () => setWorkZero("X0Y0"));
-  if (zeroButtons.go_work_zero) zeroButtons.go_work_zero.addEventListener("click", goToWorkZero);
-  if (zeroButtons.go_machine_zero) zeroButtons.go_machine_zero.addEventListener("click", goToMachineZero);
+  if (zero_buttons.all) zero_buttons.all.addEventListener("click", () => set_work_zero("X0Y0Z0"));
+  if (zero_buttons.x) zero_buttons.x.addEventListener("click", () => set_work_zero("X0"));
+  if (zero_buttons.y) zero_buttons.y.addEventListener("click", () => set_work_zero("Y0"));
+  if (zero_buttons.z) zero_buttons.z.addEventListener("click", () => set_work_zero("Z0"));
+  if (zero_buttons.xy) zero_buttons.xy.addEventListener("click", () => set_work_zero("X0Y0"));
+  if (zero_buttons.go_work_zero) zero_buttons.go_work_zero.addEventListener("click", go_to_work_zero);
+  if (zero_buttons.go_machine_zero) zero_buttons.go_machine_zero.addEventListener("click", go_to_machine_zero);
   
   // Setup step size buttons
   setupStepSizeButtons();
   
   // Save XY preset functionality
-  if (saveXyPresetButton) {
-    saveXyPresetButton.addEventListener("click", () => saveCurrentXyPosition());
+  if (save_xy_preset_button) {
+    save_xy_preset_button.addEventListener("click", () => save_current_xy_position());
   }
   
   // Load saved XY coordinates and update UI
-  savedXyCoordinates = loadSavedXyCoordinates();
+  saved_xy_coordinates = load_saved_xy_coordinates();
   updateXyPresetsUi();
   
   // Initial state
-  updateConnectionStatus(false);
+  update_connection_status(false);
   
   // Start with log hidden
-  if (communicationLog) {
-    communicationLog.style.display = 'none';
+  if (communication_log) {
+    communication_log.style.display = 'none';
   }
   
   // Status update with self-scheduling setTimeout to prevent backups
   function scheduleStatusUpdate() {
     setTimeout(async () => {
-      if (isConnected) {
+      if (is_connected) {
         try {
           await updateMachineStatus();
         } catch (error) {
@@ -946,13 +932,13 @@ window.addEventListener("DOMContentLoaded", () => {
   // Start the status update loop
   scheduleStatusUpdate();
   
-  logMessage("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
+  log_message("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
   
   // Attempt auto-reconnect after a short delay to let the UI finish loading
   setTimeout(async () => {
     const reconnected = await attemptAutoReconnect();
     if (!reconnected) {
-      logMessage("Ready for manual connection.", 'info');
+      log_message("Ready for manual connection.", 'info');
     }
   }, 1000); // 1 second delay
 });
