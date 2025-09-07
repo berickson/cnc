@@ -789,12 +789,24 @@ window.addEventListener("DOMContentLoaded", () => {
     communicationLog.style.display = 'none';
   }
   
-  // Status update interval when connected
-  setInterval(() => {
-    if (isConnected) {
-      updateMachineStatus();
-    }
-  }, 100); // Update every 100ms (10 times per second)
+  // Status update with self-scheduling setTimeout to prevent backups
+  function scheduleStatusUpdate() {
+    setTimeout(async () => {
+      if (isConnected) {
+        try {
+          await updateMachineStatus();
+        } catch (error) {
+          // Don't let status update errors break the polling loop
+          console.error('Status update error:', error);
+        }
+      }
+      // Schedule next update regardless of connection state or errors
+      scheduleStatusUpdate();
+    }, 100); // Update every 100ms when not blocked
+  }
+  
+  // Start the status update loop
+  scheduleStatusUpdate();
   
   logMessage("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
   
