@@ -419,8 +419,12 @@ function update_connection_status(connected: boolean, deviceInfo?: CncDevice) {
   
   if (status_text && can_update_status) {
     if (connected && deviceInfo) {
-      status_text.textContent = `Connected to ${deviceInfo.name} (${deviceInfo.ip}:${deviceInfo.port})`;
+      // Update device info for the details modal
+      current_status_details.device_info = `${deviceInfo.name} (${deviceInfo.ip}:${deviceInfo.port})`;
+      // Use simplified status text for consistency
+      status_text.textContent = 'Ready';
     } else {
+      current_status_details.device_info = 'None';
       status_text.textContent = 'Disconnected';
     }
   }
