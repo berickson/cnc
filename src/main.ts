@@ -111,6 +111,8 @@ let is_connected = false;
 let discovered_devices: CncDevice[] = [];
 let last_work_offset = { x: 0, y: 0, z: 0 }; // Persistent work coordinate offset
 let current_alarm_code: number | null = null; // Track current alarm code
+let is_homing = false; // Track homing state - GRBL ignores status queries during homing
+let home_command_sent = false; // Track if home command has actually been sent to prevent premature completion detection
 let saved_xy_coordinates: { [name: string]: { x: number; y: number; timestamp: string } } = {};
 
 async function greet() {
@@ -312,8 +314,15 @@ async function updateMachineStatus() {
   if (!is_connected) return;
   
   return await time_async(status_update_stats, async () => {
+    // If we're homing, always show "Homing..." regardless of GRBL response
+    if (is_homing && machine_state) {
+      machine_state.textContent = 'Homing...';
+      machine_state.style.color = '#ffc107';
+    }
+    
     try {
       const status = await time_async(network_stats, () => CncManager.get_status());
+      
       const parsed = CncManager.parse_status(status, last_work_offset);
     
     if (parsed) {
@@ -357,9 +366,24 @@ async function updateMachineStatus() {
           current_alarm_code = null;
         }
         
-        machine_state.textContent = displayState;
-        machine_state.style.color = parsed.state === 'Idle' ? '#28a745' : 
-                                   parsed.state.includes('Alarm') ? '#dc3545' : '#ffc107';
+        // Detect when homing completes - only if command was actually sent
+        if (is_homing && parsed.state === 'Idle' && home_command_sent) {
+          is_homing = false;
+          home_command_sent = false;
+          log_message("Homing completed", 'success');
+          // Force immediate UI update now that homing is complete
+          if (machine_state) {
+            machine_state.textContent = 'Idle';
+            machine_state.style.color = '#28a745';
+          }
+        }
+        
+        // Only update display state if we're not homing
+        if (!is_homing) {
+          machine_state.textContent = displayState;
+          machine_state.style.color = parsed.state === 'Idle' ? '#28a745' : 
+                                     parsed.state.includes('Alarm') ? '#dc3545' : '#ffc107';
+        }
       }
       
       // Update position displays
@@ -403,19 +427,46 @@ async function home_all_axes() {
   if (!is_connected) return;
   
   try {
-    log_message("Homing all axes...");
-    const response = await CncManager.home();
-    const trimmedResponse = response.trim();
+    is_homing = true;
     
-    // Check if response contains an error and translate it
-    if (CncManager.contains_error(trimmedResponse)) {
-      const translatedResponse = CncManager.translate_response(trimmedResponse);
-      log_message(`Home command: ${translatedResponse}`, 'error');
-    } else {
-      log_message(`Home command: ${trimmedResponse}`, 'success');
+    // Update status display immediately to show "Homing..." 
+    if (machine_state) {
+      machine_state.textContent = 'Homing...';
+      machine_state.style.color = '#ffc107';
     }
+    
+    log_message("Homing all axes...");
+    
+    // Use setTimeout to defer the home command to the next event loop tick
+    // This allows the UI updates above to be rendered immediately
+    setTimeout(() => {
+      home_command_sent = true;
+      
+      CncManager.home().then(response => {
+        const trimmedResponse = response.trim();
+        
+        if (CncManager.contains_error(trimmedResponse)) {
+          const translatedResponse = CncManager.translate_response(trimmedResponse);
+          log_message(`Home command: ${translatedResponse}`, 'error');
+          is_homing = false;
+          home_command_sent = false;
+          updateMachineStatus();
+        } else {
+          log_message(`Home command: ${trimmedResponse}`, 'success');
+        }
+      }).catch(error => {
+        log_message(`Home failed: ${error}`, 'error');
+        is_homing = false;
+        home_command_sent = false;
+        updateMachineStatus();
+      });
+    }, 0);
+    
   } catch (error) {
     log_message(`Home failed: ${error}`, 'error');
+    is_homing = false;
+    home_command_sent = false;
+    await updateMachineStatus();
   }
 }
 

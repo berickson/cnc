@@ -251,7 +251,19 @@ impl CncManager {
 
     /// Home the machine
     pub fn home(&mut self) -> Result<String> {
-        self.send_command("$H")
+        // Homing takes longer than normal commands, so increase timeout temporarily
+        if let Some(ref stream) = self.current_connection {
+            stream.set_read_timeout(Some(Duration::from_millis(30000)))?; // 30 second timeout for homing
+        }
+        
+        let result = self.send_command("$H");
+        
+        // Restore normal timeout after homing command
+        if let Some(ref stream) = self.current_connection {
+            stream.set_read_timeout(Some(Duration::from_millis(5000)))?; // Back to 5 second timeout
+        }
+        
+        result
     }
 
     /// Reset/unlock the machine

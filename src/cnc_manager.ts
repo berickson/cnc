@@ -69,7 +69,11 @@ export class CncManager {
    * Jog the machine in a specific direction
    */
   static async jog(axis: string, distance: number, feed_rate: number = 1000): Promise<string> {
-    return await invoke<string>("jog_cnc", { axis, distance, feed_rate });
+    return await invoke<string>("jog_cnc", { 
+      axis: axis, 
+      distance: distance, 
+      feed_rate: feed_rate 
+    });
   }
 
   /**

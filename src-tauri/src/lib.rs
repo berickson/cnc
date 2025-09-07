@@ -40,7 +40,7 @@ fn send_cnc_command(command: String, state: tauri::State<AppState>) -> Result<St
     manager.send_command(&command).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 fn jog_cnc(
     axis: String,
     distance: f32,
