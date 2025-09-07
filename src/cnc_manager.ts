@@ -18,7 +18,7 @@ export class CncManager {
   /**
    * Discover CNC devices on the network
    */
-  static async discoverDevices(): Promise<CncDevice[]> {
+  static async discover_devices(): Promise<CncDevice[]> {
     return await invoke<CncDevice[]>("discover_cnc_devices");
   }
 
@@ -30,8 +30,8 @@ export class CncManager {
     
     // Check for alarm status immediately after connecting
     try {
-      const alarmStatus = await invoke<string>("check_cnc_alarm_status");
-      console.log('Initial alarm status check:', alarmStatus);
+      const alarm_status = await invoke<string>("check_cnc_alarm_status");
+      console.log('Initial alarm status check:', alarm_status);
     } catch (alarmError) {
       console.warn('Could not check alarm status on connect:', alarmError);
     }
@@ -40,7 +40,7 @@ export class CncManager {
   /**
    * Check current alarm status - can be called when needed
    */
-  static async checkAlarmStatus(): Promise<string> {
+  static async check_alarm_status(): Promise<string> {
     return await invoke<string>("check_cnc_alarm_status");
   }
 
@@ -54,22 +54,22 @@ export class CncManager {
   /**
    * Send a raw command to the CNC
    */
-  static async sendCommand(command: string): Promise<string> {
+  static async send_command(command: string): Promise<string> {
     return await invoke<string>("send_cnc_command", { command });
   }
 
   /**
    * Get the current machine status
    */
-  static async getStatus(): Promise<string> {
+  static async get_status(): Promise<string> {
     return await invoke<string>("get_cnc_status");
   }
 
   /**
    * Jog the machine in a specific direction
    */
-  static async jog(axis: string, distance: number, feedRate: number = 1000): Promise<string> {
-    return await invoke<string>("jog_cnc", { axis, distance, feedRate });
+  static async jog(axis: string, distance: number, feed_rate: number = 1000): Promise<string> {
+    return await invoke<string>("jog_cnc", { axis, distance, feed_rate });
   }
 
   /**
@@ -89,47 +89,47 @@ export class CncManager {
   /**
    * Get current connection status
    */
-  static async getConnectionStatus(): Promise<CncConnection | null> {
+  static async get_connection_status(): Promise<CncConnection | null> {
     return await invoke<CncConnection | null>("get_connection_status");
   }
 
   /**
    * Set work coordinate zero for specified axes
    */
-  static async setWorkZero(axes: string = "X0Y0Z0"): Promise<string> {
-    return await this.sendCommand(`G10L20P1${axes}`);
+  static async set_work_zero(axes: string = "X0Y0Z0"): Promise<string> {
+    return await this.send_command(`G10L20P1${axes}`);
   }
 
   /**
    * Move to work coordinates
    */
-  static async moveToWorkPosition(x?: number, y?: number, z?: number, feedRate: number = 1000): Promise<string> {
+  static async move_to_work_position(x?: number, y?: number, z?: number, feed_rate: number = 1000): Promise<string> {
     let gcode = "G0";
     if (x !== undefined) gcode += `X${x}`;
     if (y !== undefined) gcode += `Y${y}`;
     if (z !== undefined) gcode += `Z${z}`;
-    if (feedRate !== 1000) gcode += `F${feedRate}`;
-    return await this.sendCommand(gcode);
+    if (feed_rate !== 1000) gcode += `F${feed_rate}`;
+    return await this.send_command(gcode);
   }
 
   /**
    * Emergency stop
    */
-  static async emergencyStop(): Promise<string> {
-    return await this.sendCommand("!");
+  static async emergency_stop(): Promise<string> {
+    return await this.send_command("!");
   }
 
   /**
    * Translate GRBL error responses to human-readable format
    */
-  static translateResponse(response: string): string {
+  static translate_response(response: string): string {
     return GrblErrorTranslator.translateError(response);
   }
 
   /**
    * Check if a response contains an error or alarm
    */
-  static containsError(response: string): boolean {
+  static contains_error(response: string): boolean {
     return GrblErrorTranslator.containsError(response);
   }
 
@@ -143,23 +143,23 @@ export class CncManager {
   /**
    * Parse Grbl status response
    */
-  static parseStatus(statusResponse: string, lastKnownWCO?: { x: number; y: number; z: number }): {
+  static parse_status(statusResponse: string, lastKnownWCO?: { x: number; y: number; z: number }): {
     state: string;
     position: { x: number; y: number; z: number };
     workPosition: { x: number; y: number; z: number };
     workOffset?: { x: number; y: number; z: number };
   } | null {
     // Clean up the response - remove "ok" and trim whitespace
-    const cleanResponse = statusResponse.replace(/\n?ok\s*$/m, '').trim();
+    const clean_response = statusResponse.replace(/\n?ok\s*$/m, '').trim();
     
     // Check for ALARM messages first (e.g., "ALARM:9")
-    const alarmMatch = cleanResponse.match(/ALARM:(\d+)/);
-    if (alarmMatch) {
-      const alarmCode = parseInt(alarmMatch[1]);
-      const translatedAlarm = GrblErrorTranslator.translateAlarm(alarmCode);
+    const alarm_match = clean_response.match(/ALARM:(\d+)/);
+    if (alarm_match) {
+      const alarm_code = parseInt(alarm_match[1]);
+      const translated_alarm = GrblErrorTranslator.translateAlarm(alarm_code);
       
       return {
-        state: translatedAlarm,
+        state: translated_alarm,
         position: { x: 0, y: 0, z: 0 },
         workPosition: { x: 0, y: 0, z: 0 }
       };
@@ -167,22 +167,22 @@ export class CncManager {
     
     // Parse Grbl status format: <State|MPos:x,y,z|...>
     // May include: Bf:, FS:, Pn:, WCO:, WPos:, Ov:, etc.
-    const statusMatch = cleanResponse.match(/<([^|>]+)(?:\|([^>]+))?>/);
-    if (!statusMatch) return null;
+    const status_match = clean_response.match(/<([^|>]+)(?:\|([^>]+))?>/);
+    if (!status_match) return null;
 
-    const [, state, statusFields] = statusMatch;
+    const [, state, status_fields] = status_match;
     
     // Handle generic "Alarm" state (common in older Grbl versions)
-    if (state === 'Alarm' && statusFields) {
+    if (state === 'Alarm' && status_fields) {
       // Look for pin states that indicate limit switches
-      const pinMatch = statusFields.match(/Pn:([^|]+)/);
-      if (pinMatch) {
-        const pins = pinMatch[1];
+      const pin_match = status_fields.match(/Pn:([^|]+)/);
+      if (pin_match) {
+        const pins = pin_match[1];
         // If pins contain X, Y, or Z, it's likely a hard limit alarm
         if (pins.match(/[XYZ]/)) {
-          const translatedAlarm = GrblErrorTranslator.translateAlarm(9); // Hard limit
+          const translated_alarm = GrblErrorTranslator.translateAlarm(9); // Hard limit
           return {
-            state: translatedAlarm,
+            state: translated_alarm,
             position: { x: 0, y: 0, z: 0 },
             workPosition: { x: 0, y: 0, z: 0 }
           };
@@ -202,8 +202,8 @@ export class CncManager {
     let wco: number[] | null = null; // Work coordinate offset from this status
     let wpos: number[] = []; // Work position, if explicitly provided
     
-    if (statusFields) {
-      const fields = statusFields.split('|');
+    if (status_fields) {
+      const fields = status_fields.split('|');
       
       for (const field of fields) {
         if (field.startsWith('MPos:')) {

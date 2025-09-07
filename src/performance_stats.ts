@@ -1,11 +1,11 @@
 // TypeScript equivalent of RunStatistics for performance monitoring
 export class RunStatistics {
   public name: string;
-  private startTime: number = 0;
-  private sumElapsedMs: number = 0;
-  private lastElapsedMs: number = 0;
-  private maxElapsedMs: number = 0;
-  private sumElapsedMsSquared: number = 0;
+  private start_time: number = 0;
+  private sum_elapsed_ms: number = 0;
+  private last_elapsed_ms: number = 0;
+  private max_elapsed_ms: number = 0;
+  private sum_elapsed_msSquared: number = 0;
   private count: number = 0;
 
   constructor(name: string) {
@@ -13,52 +13,52 @@ export class RunStatistics {
   }
 
   start(): void {
-    this.startTime = performance.now();
+    this.start_time = performance.now();
   }
 
   stop(): void {
-    this.lastElapsedMs = performance.now() - this.startTime;
-    this.sumElapsedMs += this.lastElapsedMs;
-    this.sumElapsedMsSquared += this.lastElapsedMs * this.lastElapsedMs;
-    if (this.lastElapsedMs > this.maxElapsedMs) {
-      this.maxElapsedMs = this.lastElapsedMs;
+    this.last_elapsed_ms = performance.now() - this.start_time;
+    this.sum_elapsed_ms += this.last_elapsed_ms;
+    this.sum_elapsed_msSquared += this.last_elapsed_ms * this.last_elapsed_ms;
+    if (this.last_elapsed_ms > this.max_elapsed_ms) {
+      this.max_elapsed_ms = this.last_elapsed_ms;
     }
     this.count++;
   }
 
   mean(): number {
-    return this.count > 0 ? this.sumElapsedMs / this.count : 0;
+    return this.count > 0 ? this.sum_elapsed_ms / this.count : 0;
   }
 
   stddev(): number {
     if (this.count <= 1) return 0;
-    const meanVal = this.mean();
-    const variance = (this.sumElapsedMsSquared / this.count) - (meanVal * meanVal);
+    const mean_val = this.mean();
+    const variance = (this.sum_elapsed_msSquared / this.count) - (mean_val * mean_val);
     return Math.sqrt(Math.max(0, variance));
   }
 
   max(): number {
-    return this.maxElapsedMs;
+    return this.max_elapsed_ms;
   }
 
   last(): number {
-    return this.lastElapsedMs;
+    return this.last_elapsed_ms;
   }
 
   total(): number {
-    return this.sumElapsedMs;
+    return this.sum_elapsed_ms;
   }
 
-  getCount(): number {
+  get_count(): number {
     return this.count;
   }
 
   reset(): void {
-    this.startTime = 0;
-    this.sumElapsedMs = 0;
-    this.lastElapsedMs = 0;
-    this.maxElapsedMs = 0;
-    this.sumElapsedMsSquared = 0;
+    this.start_time = 0;
+    this.sum_elapsed_ms = 0;
+    this.last_elapsed_ms = 0;
+    this.max_elapsed_ms = 0;
+    this.sum_elapsed_msSquared = 0;
     this.count = 0;
   }
 
@@ -86,7 +86,7 @@ export class BlockTimer {
 }
 
 // Helper function for timing async operations
-export async function timeAsync<T>(stats: RunStatistics, fn: () => Promise<T>): Promise<T> {
+export async function time_async<T>(stats: RunStatistics, fn: () => Promise<T>): Promise<T> {
   stats.start();
   try {
     return await fn();
@@ -96,7 +96,7 @@ export async function timeAsync<T>(stats: RunStatistics, fn: () => Promise<T>): 
 }
 
 // Helper function for timing sync operations
-export function timeSync<T>(stats: RunStatistics, fn: () => T): T {
+export function time_sync<T>(stats: RunStatistics, fn: () => T): T {
   stats.start();
   try {
     return fn();

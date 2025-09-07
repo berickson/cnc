@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { CncManager, type CncDevice } from "./cnc_manager";
-import { RunStatistics, timeAsync, timeSync } from "./performance_stats";
+import { RunStatistics, time_async, time_sync } from "./performance_stats";
 
 // Performance monitoring stats
 const status_update_stats = new RunStatistics("CNC Status Update");
@@ -17,30 +17,30 @@ function report_performance_stats() {
   // Write to file instead of cluttering the UI
   const reports: string[] = [];
   
-  if (status_update_stats.getCount() > 0 || network_stats.getCount() > 0 || 
-      log_message_stats.getCount() > 0 || dom_update_stats.getCount() > 0) {
+  if (status_update_stats.get_count() > 0 || network_stats.get_count() > 0 || 
+      log_message_stats.get_count() > 0 || dom_update_stats.get_count() > 0) {
     
     reports.push("📊 Performance Report");
     
-    if (status_update_stats.getCount() > 0) {
+    if (status_update_stats.get_count() > 0) {
       reports.push(`Status: ${status_update_stats.toString()}`);
       if (status_update_stats.mean() > 50 || status_update_stats.max() > 200) {
         reports.push(`🐌 Status updates slow!`);
       }
     }
     
-    if (network_stats.getCount() > 0) {
+    if (network_stats.get_count() > 0) {
       reports.push(`Network: ${network_stats.toString()}`);
       if (network_stats.mean() > 100 || network_stats.max() > 500) {
         reports.push(`🐌 Network calls slow!`);
       }
     }
     
-    if (log_message_stats.getCount() > 0) {
+    if (log_message_stats.get_count() > 0) {
       reports.push(`Logging: ${log_message_stats.toString()}`);
     }
     
-    if (dom_update_stats.getCount() > 0) {
+    if (dom_update_stats.get_count() > 0) {
       reports.push(`DOM: ${dom_update_stats.toString()}`);
     }
     
@@ -122,7 +122,7 @@ async function greet() {
 }
 
 function log_message(message: string, type: 'info' | 'error' | 'success' = 'info') {
-  return timeSync(log_message_stats, () => {
+  return time_sync(log_message_stats, () => {
     if (!communication_log) return;
     
     // Check for alarm codes and alarm-related messages
@@ -144,7 +144,7 @@ function log_message(message: string, type: 'info' | 'error' | 'success' = 'info
     const log_entry = `[${timestamp}] ${prefix} ${message}\n`;
     
     // Time the expensive DOM operations
-    timeSync(dom_update_stats, () => {
+    time_sync(dom_update_stats, () => {
       if (communication_log) {
         communication_log.textContent += log_entry;
         communication_log.scrollTop = communication_log.scrollHeight;
@@ -245,7 +245,7 @@ async function discover_and_connect() {
   connect_button!.disabled = true;
   
   try {
-    discovered_devices = await CncManager.discoverDevices();
+    discovered_devices = await CncManager.discover_devices();
     log_message(`Found ${discovered_devices.length} potential CNC device(s)`);
     
     if (discovered_devices.length === 0) {
@@ -266,11 +266,11 @@ async function discover_and_connect() {
     // Check for alarm status immediately after connecting
     try {
       log_message("Checking initial alarm status...", 'info');
-      const alarmStatus = await CncManager.checkAlarmStatus();
+      const alarmStatus = await CncManager.check_alarm_status();
       log_message(`Initial alarm status check result: ${alarmStatus}`, 'info');
       
       // Parse the status response to extract alarm information
-      const parsed = CncManager.parseStatus(alarmStatus);
+      const parsed = CncManager.parse_status(alarmStatus);
       if (parsed && parsed.state.includes('Alarm:')) {
         // Extract alarm code from parsed state like "Alarm: 9 (Hard limit triggered)"
         const alarmMatch = parsed.state.match(/Alarm: (\d+)/);
@@ -311,10 +311,10 @@ async function disconnect() {
 async function updateMachineStatus() {
   if (!is_connected) return;
   
-  return await timeAsync(status_update_stats, async () => {
+  return await time_async(status_update_stats, async () => {
     try {
-      const status = await timeAsync(network_stats, () => CncManager.getStatus());
-      const parsed = CncManager.parseStatus(status, last_work_offset);
+      const status = await time_async(network_stats, () => CncManager.get_status());
+      const parsed = CncManager.parse_status(status, last_work_offset);
     
     if (parsed) {
       // Update stored work offset if this status contains WCO
@@ -388,8 +388,8 @@ async function send_jog_command(axis: string, direction: number) {
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${translatedResponse}`, 'error');
     } else {
       log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: ${trimmedResponse}`);
@@ -408,8 +408,8 @@ async function home_all_axes() {
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Home command: ${translatedResponse}`, 'error');
     } else {
       log_message(`Home command: ${trimmedResponse}`, 'success');
@@ -427,8 +427,8 @@ async function clear_alarm() {
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Reset/Clear alarm: ${translatedResponse}`, 'error');
     } else {
       log_message(`Reset/Clear alarm: ${trimmedResponse}`, 'success');
@@ -442,12 +442,12 @@ async function set_work_zero(axes: string) {
   if (!is_connected) return;
   
   try {
-    const response = await CncManager.setWorkZero(axes);
+    const response = await CncManager.set_work_zero(axes);
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Set work zero ${axes}: ${translatedResponse}`, 'error');
     } else {
       log_message(`Set work zero ${axes}: ${trimmedResponse}`, 'success');
@@ -462,12 +462,12 @@ async function go_to_work_zero() {
   
   try {
     log_message("Moving to work coordinate X0 Y0 (preserving Z)...");
-    const response = await CncManager.sendCommand("G0 X0 Y0");
+    const response = await CncManager.send_command("G0 X0 Y0");
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Go work zero: ${translatedResponse}`, 'error');
     } else {
       log_message(`Go work zero: ${trimmedResponse}`, 'success');
@@ -482,12 +482,12 @@ async function go_to_machine_zero() {
   
   try {
     log_message("Moving to machine coordinate X0 Y0 (preserving Z)...");
-    const response = await CncManager.sendCommand("G53 G0 X0 Y0");
+    const response = await CncManager.send_command("G53 G0 X0 Y0");
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Go machine zero: ${translatedResponse}`, 'error');
     } else {
       log_message(`Go machine zero: ${trimmedResponse}`, 'success');
@@ -548,8 +548,8 @@ async function save_current_xy_position(name?: string) {
 
   // Get current machine status to get accurate machine coordinates
   try {
-    const status = await CncManager.getStatus();
-    const parsed = CncManager.parseStatus(status, last_work_offset);
+    const status = await CncManager.get_status();
+    const parsed = CncManager.parse_status(status, last_work_offset);
     
     if (!parsed) {
       log_message('Could not get current position', 'error');
@@ -602,12 +602,12 @@ async function gotoSavedXyPosition(name: string) {
 
   try {
     // Move to the saved machine coordinates using G53 (machine coordinate system)
-    const response = await CncManager.sendCommand(`G53 G0 X${coords.x} Y${coords.y}`);
+    const response = await CncManager.send_command(`G53 G0 X${coords.x} Y${coords.y}`);
     const trimmedResponse = response.trim();
     
     // Check if response contains an error and translate it
-    if (CncManager.containsError(trimmedResponse)) {
-      const translatedResponse = CncManager.translateResponse(trimmedResponse);
+    if (CncManager.contains_error(trimmedResponse)) {
+      const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${translatedResponse}`, 'error');
     } else {
       log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${trimmedResponse}`, 'success');
