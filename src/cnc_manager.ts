@@ -168,6 +168,8 @@ export class CncManager {
     position: { x: number; y: number; z: number };
     workPosition: { x: number; y: number; z: number };
     workOffset?: { x: number; y: number; z: number };
+    buffer_info?: { planner_blocks: number; rx_bytes: number };
+    feed_speed?: { feed_rate: number; spindle_speed: number };
   } | null {
     // Clean up the response - remove "ok" and trim whitespace
     const clean_response = statusResponse.replace(/\n?ok\s*$/m, '').trim();
@@ -221,6 +223,8 @@ export class CncManager {
     let mpos: number[] = [];
     let wco: number[] | null = null; // Work coordinate offset from this status
     let wpos: number[] = []; // Work position, if explicitly provided
+    let buffer_info: { planner_blocks: number; rx_bytes: number } | undefined;
+    let feed_speed: { feed_rate: number; spindle_speed: number } | undefined;
     
     if (status_fields) {
       const fields = status_fields.split('|');
@@ -232,6 +236,24 @@ export class CncManager {
           wpos = field.substring(5).split(',').map(parseFloat);
         } else if (field.startsWith('WCO:')) {
           wco = field.substring(4).split(',').map(parseFloat);
+        } else if (field.startsWith('Bf:')) {
+          // Buffer state: Bf:planner_blocks,rx_bytes
+          const buffer_parts = field.substring(3).split(',').map(num => parseInt(num));
+          if (buffer_parts.length >= 2) {
+            buffer_info = {
+              planner_blocks: buffer_parts[0],
+              rx_bytes: buffer_parts[1]
+            };
+          }
+        } else if (field.startsWith('FS:')) {
+          // Feed and spindle speed: FS:feed_rate,spindle_speed
+          const fs_parts = field.substring(3).split(',').map(num => parseFloat(num));
+          if (fs_parts.length >= 2) {
+            feed_speed = {
+              feed_rate: fs_parts[0],
+              spindle_speed: fs_parts[1]
+            };
+          }
         }
       }
     }
@@ -265,6 +287,16 @@ export class CncManager {
     // Include work offset if it was provided in this status
     if (wco && wco.length >= 3) {
       (result as any).workOffset = { x: wco[0], y: wco[1], z: wco[2] };
+    }
+
+    // Include buffer information if available
+    if (buffer_info) {
+      (result as any).buffer_info = buffer_info;
+    }
+
+    // Include feed/speed information if available
+    if (feed_speed) {
+      (result as any).feed_speed = feed_speed;
     }
 
     return result;

@@ -7,6 +7,8 @@ import { CncManager, type CncDevice } from "./cnc_manager";
 import { RunStatistics, time_async, time_sync } from "./performance_stats";
 import { CncStateMachine, CncState, EventType, type CncEvent } from "./cnc_state_machine";
 import { GcodeTimeEstimator, GcodeJobProgressTracker, type GcodeTimeEstimate } from "./gcode_time_estimator";
+import './gcode_time_estimator.test'; // Import tests for UI access
+import { run_all_tests } from './gcode_time_estimator.test';
 
 // Performance monitoring stats
 const status_update_stats = new RunStatistics("CNC Status Update");
@@ -158,8 +160,19 @@ let selected_file_time_estimate: HTMLElement | null;
 let job_progress_info: HTMLElement | null;
 let progress_percent: HTMLElement | null;
 let progress_time_info: HTMLElement | null;
+
+// Buffer status tracking
+let current_buffer_info: { planner_blocks: number; rx_bytes: number } | null = null;
 let progress_bar: HTMLElement | null;
 let progress_operation: HTMLElement | null;
+let progress_buffer_info: HTMLElement | null;
+let progress_line_info: HTMLElement | null;
+let progress_command_info: HTMLElement | null;
+
+// Test UI elements
+let run_tests_button: HTMLElement | null;
+let test_results: HTMLElement | null;
+let test_results_content: HTMLElement | null;
 
 // G-code file state
 let current_gcode_content: string | null = null;
@@ -356,6 +369,26 @@ function debug_force_idle() {
 // Make debug functions available globally
 (window as any).debug_cnc_state = debug_cnc_state;
 (window as any).debug_force_idle = debug_force_idle;
+
+// Debug function for testing progress bar
+function debug_test_progress() {
+  console.log('🔧 Testing progress bar manually...');
+  
+  if (!current_job_progress_tracker) {
+    console.log('❌ No job tracker available');
+    return;
+  }
+  
+  if (!current_job_progress_tracker.is_job_running()) {
+    console.log('❌ Job is not running');
+    return;
+  }
+  
+  console.log('✅ Job tracker is running, forcing progress update...');
+  update_job_progress_ui();
+}
+
+(window as any).debug_test_progress = debug_test_progress;
 
 // Global state
 let is_connected = false;
@@ -663,21 +696,46 @@ async function updateMachineStatus() {
           if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
             log_message('🎉 G-code job completed!', 'success');
             current_job_progress_tracker.stop_job();
+            current_buffer_info = null; // Clear buffer info when job completes
+            
+            // Clear progress displays
+            if (progress_buffer_info) {
+              progress_buffer_info.textContent = 'Buffer: Ready';
+            }
+            if (progress_line_info) {
+              progress_line_info.textContent = 'Line: -';
+            }
+            if (progress_command_info) {
+              progress_command_info.textContent = 'Command: -';
+            }
+            
             update_file_selection_ui(); // Hide progress display
           }
           handle_state_event_and_update_ui({ type: EventType.STATUS_IDLE, data: parsed });
         } else if (parsed.state === 'Jog') {
           handle_state_event_and_update_ui({ type: EventType.STATUS_JOG, data: parsed });
         } else if (parsed.state === 'Run') {
-          // Update job progress if we have an active job
+          // Update job progress if we have an active job using buffer information
           if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
-            // Simple progress simulation based on time
-            // In a real implementation, you'd track actual G-code line numbers
-            const progress = current_job_progress_tracker.get_current_progress();
-            if (progress && progress.elapsed_time_seconds > 0) {
-              // Estimate current line based on elapsed time ratio
-              const estimated_line = Math.floor((progress.elapsed_time_seconds / (progress.elapsed_time_seconds + progress.estimated_remaining_seconds)) * progress.total_lines);
-              current_job_progress_tracker.update_current_line(estimated_line);
+            // Use buffer information for accurate progress tracking
+            const buffer_info = (parsed as any).buffer_info;
+            if (buffer_info) {
+              // Store buffer info globally for progress display
+              current_buffer_info = {
+                planner_blocks: buffer_info.planner_blocks,
+                rx_bytes: buffer_info.rx_bytes
+              };
+              
+              current_job_progress_tracker.update_buffer_status(
+                buffer_info.planner_blocks, 
+                buffer_info.rx_bytes
+              );
+              
+              // Buffer status is available but not reliable for progress tracking
+              // We'll rely on time-based estimation instead
+            } else {
+              // No buffer info available, pure time-based progress tracking
+              // The new runtime simulation handles this automatically
             }
           }
           handle_state_event_and_update_ui({ type: EventType.STATUS_RUN, data: parsed });
@@ -731,6 +789,11 @@ async function updateMachineStatus() {
         if (work_x_pos) work_x_pos.textContent = parsed.workPosition.x.toFixed(3);
         if (work_y_pos) work_y_pos.textContent = parsed.workPosition.y.toFixed(3);
         if (work_z_pos) work_z_pos.textContent = parsed.workPosition.z.toFixed(3);
+        
+        // Update job progress tracker with current position for geometry-based tracking
+        if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+          current_job_progress_tracker.update_position(parsed.workPosition);
+        }
       }
     } catch (error) {
       log_message(`Status update failed: ${error}`, 'error');
@@ -871,6 +934,19 @@ async function cancel_operation() {
     // Stop job tracking if active
     if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
       current_job_progress_tracker.stop_job();
+      current_buffer_info = null; // Clear buffer info when job is canceled
+      
+      // Clear progress displays
+      if (progress_buffer_info) {
+        progress_buffer_info.textContent = 'Buffer: Ready';
+      }
+      if (progress_line_info) {
+        progress_line_info.textContent = 'Line: -';
+      }
+      if (progress_command_info) {
+        progress_command_info.textContent = 'Command: -';
+      }
+      
       log_message('🛑 Job canceled', 'info');
       update_file_selection_ui(); // Hide progress display
     }
@@ -1286,10 +1362,20 @@ async function send_gcode_to_cnc() {
   // Start job progress tracking
   if (current_job_progress_tracker) {
     current_job_progress_tracker.start_job();
-    log_message(`Job started: ${current_gcode_filename}`, 'info');
+    log_message(`📊 Job started: ${current_gcode_filename}`, 'info');
     
-    // Show progress UI
+    // Force immediate UI update to show progress panel
     update_file_selection_ui();
+    
+    // Force an immediate progress update
+    setTimeout(() => {
+      log_message('🔍 Force updating progress UI after job start', 'info');
+      update_job_progress_ui();
+    }, 100);
+    
+    log_message(`🔍 Job tracking started`, 'info');
+  } else {
+    log_message('🔍 No job progress tracker available', 'error');
   }
   
   // TODO: This will send the entire G-code at once
@@ -1480,10 +1566,25 @@ function update_file_selection_ui() {
 
 // Update job progress UI elements
 function update_job_progress_ui() {
-  if (!current_job_progress_tracker) return;
+  if (!current_job_progress_tracker) {
+    log_message('🔍 Progress update: No job tracker', 'info');
+    return;
+  }
   
   const progress = current_job_progress_tracker.get_current_progress();
-  if (!progress) return;
+  if (!progress) {
+    log_message('🔍 Progress update: No progress data', 'info');
+    return;
+  }
+  
+  // Enhanced logging with buffer info
+  let log_message_text = `🔍 Progress: ${progress.percent_complete.toFixed(1)}% (Line ${progress.current_line}/${progress.total_lines})`;
+  
+  if (current_buffer_info) {
+    log_message_text += ` [Buffer: ${current_buffer_info.planner_blocks} blocks, ${current_buffer_info.rx_bytes} bytes]`;
+  }
+  
+  log_message(log_message_text, 'info');
   
   // Update progress percentage
   if (progress_percent) {
@@ -1500,6 +1601,7 @@ function update_job_progress_ui() {
   // Update progress bar
   if (progress_bar) {
     progress_bar.style.width = `${progress.percent_complete}%`;
+    log_message(`🔍 Progress bar width set to: ${progress.percent_complete}%`, 'info');
     // Add animation when job is running
     if (current_job_progress_tracker.is_job_running()) {
       progress_bar.className = 'progress-bar-animated';
@@ -1508,9 +1610,94 @@ function update_job_progress_ui() {
     }
   }
   
-  // Update current operation
+  // Update current operation with buffer info if available
   if (progress_operation) {
     progress_operation.textContent = progress.current_operation;
+  }
+  
+  // Update dedicated buffer info display
+  if (progress_buffer_info) {
+    if (current_buffer_info) {
+      progress_buffer_info.textContent = `Buffer: ${current_buffer_info.planner_blocks} blocks, ${current_buffer_info.rx_bytes} bytes`;
+    } else {
+      progress_buffer_info.textContent = 'Buffer: No data';
+    }
+  }
+
+  // Update line number and command information
+  if (progress_line_info) {
+    progress_line_info.textContent = `Line: ${progress.current_line}/${progress.total_lines}`;
+  }
+
+  if (progress_command_info) {
+    if (progress.current_command) {
+      progress_command_info.textContent = `Command: ${progress.current_command}`;
+    } else {
+      progress_command_info.textContent = 'Command: -';
+    }
+  }
+}
+
+function run_progress_tests() {
+  if (!test_results || !test_results_content) {
+    log_message('Test UI elements not found', 'error');
+    return;
+  }
+  
+  log_message('🧪 Running progress tracking tests...', 'info');
+  
+  // Show test results panel
+  test_results.style.display = 'block';
+  test_results_content.textContent = 'Running tests...\n';
+  
+  try {
+    const test_results_data = run_all_tests();
+    let output = '🚀 Progress Tracking Test Results\n';
+    output += '====================================\n\n';
+    
+    let total_passed = 0;
+    
+    test_results_data.forEach((result) => {
+      output += `📋 ${result.name}:\n`;
+      
+      if (result.passed) {
+        output += '✅ PASSED\n';
+        total_passed++;
+      } else {
+        output += '❌ FAILED\n';
+        result.errors.forEach(error => {
+          output += `   ${error}\n`;
+        });
+      }
+      
+      // Add some key details (not all to avoid clutter)
+      result.details.slice(0, 5).forEach(detail => {
+        output += `   ${detail}\n`;
+      });
+      
+      if (result.details.length > 5) {
+        output += `   ... (${result.details.length - 5} more details)\n`;
+      }
+      
+      output += '\n';
+    });
+    
+    output += `📊 Final Results: ${total_passed}/${test_results_data.length} tests passed\n`;
+    
+    if (total_passed === test_results_data.length) {
+      output += '🎉 All tests PASSED! Position tracking is working correctly.\n';
+      log_message('✅ All progress tracking tests passed', 'success');
+    } else {
+      output += '💥 Some tests FAILED. Check the details above.\n';
+      log_message(`❌ ${test_results_data.length - total_passed} tests failed`, 'error');
+    }
+    
+    test_results_content.textContent = output;
+    
+  } catch (error) {
+    const error_output = `❌ Error running tests: ${error}\n\nThis might indicate a problem with the test setup or the progress tracking algorithm.`;
+    test_results_content.textContent = error_output;
+    log_message(`Error running tests: ${error}`, 'error');
   }
 }
 
@@ -1693,6 +1880,28 @@ window.addEventListener("DOMContentLoaded", () => {
   progress_time_info = document.getElementById("progress_time_info");
   progress_bar = document.getElementById("progress_bar");
   progress_operation = document.getElementById("progress_operation");
+  progress_buffer_info = document.getElementById("progress_buffer_info");
+  progress_line_info = document.getElementById("progress_line_info");
+  progress_command_info = document.getElementById("progress_command_info");
+  
+  // Test UI elements
+  run_tests_button = document.getElementById("run_tests_button") as HTMLButtonElement;
+  test_results = document.getElementById("test_results");
+  test_results_content = document.getElementById("test_results_content");
+  
+  // Debug: Check if progress elements were found
+  const progress_elements_found = {
+    job_progress_info: !!job_progress_info,
+    progress_percent: !!progress_percent,
+    progress_time_info: !!progress_time_info,
+    progress_bar: !!progress_bar,
+    progress_operation: !!progress_operation,
+    progress_buffer_info: !!progress_buffer_info,
+    progress_line_info: !!progress_line_info,
+    progress_command_info: !!progress_command_info
+  };
+  
+  log_message(`🔍 Progress UI elements initialized: ${JSON.stringify(progress_elements_found)}`, 'info');
   
   // Jog buttons
   jog_buttons = {
@@ -1792,6 +2001,11 @@ window.addEventListener("DOMContentLoaded", () => {
   // Save XY preset functionality
   if (save_xy_preset_button) {
     save_xy_preset_button.addEventListener("click", () => save_current_xy_position());
+  }
+  
+  // Test functionality
+  if (run_tests_button) {
+    run_tests_button.addEventListener("click", run_progress_tests);
   }
   
   // G-code file operation functionality

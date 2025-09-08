@@ -7,11 +7,26 @@
 
 export interface GcodeTimeEstimate {
   total_time_seconds: number;
-  total_distance: number;
+  total_distance_mm: number;
+  rapid_moves_time_seconds: number;
+  cutting_moves_time_seconds: number;
+  total_lines: number;
   line_count: number;
   rapid_moves_time: number;
   cutting_moves_time: number;
-  estimated_completion?: Date;
+  total_distance: number;
+  estimated_completion: Date;
+}
+
+export interface JobProgressInfo {
+  current_line: number;
+  total_lines: number;
+  elapsed_time_seconds: number;
+  estimated_remaining_seconds: number;
+  percent_complete: number;
+  current_operation: string;
+  current_line_number: number;
+  current_command: string;
 }
 
 export interface GcodeProgress {
@@ -21,6 +36,8 @@ export interface GcodeProgress {
   estimated_remaining_seconds: number;
   percent_complete: number;
   current_operation: string;
+  current_line_number: number;
+  current_command: string;
 }
 
 export interface GcodeLine {
@@ -75,6 +92,7 @@ export class GcodeTimeEstimator {
   private parsed_lines: GcodeLine[] = [];
   private current_position = { x: 0, y: 0, z: 0 };
   private current_feed_rate = 0;
+  private last_confirmed_line_index = 0; // Temporal progression constraint - never go backwards
   
   constructor(machine_params?: Partial<MachineParameters>) {
     this.machine_params = { ...DEFAULT_MACHINE_PARAMS, ...machine_params };
@@ -118,10 +136,14 @@ export class GcodeTimeEstimator {
     
     return {
       total_time_seconds: total_time,
-      total_distance,
+      total_distance_mm: total_distance,
+      rapid_moves_time_seconds: rapid_moves_time,
+      cutting_moves_time_seconds: cutting_moves_time,
+      total_lines: this.parsed_lines.length,
       line_count: this.parsed_lines.length,
       rapid_moves_time,
       cutting_moves_time,
+      total_distance,
       estimated_completion: new Date(Date.now() + total_time * 1000)
     };
   }
@@ -134,9 +156,9 @@ export class GcodeTimeEstimator {
   }
   
   /**
-   * Calculate progress based on current line number
+   * Calculate progress based on actual machine position (most accurate method)
    */
-  calculate_progress(current_line_number: number, start_time: Date): GcodeProgress {
+  calculate_progress_by_position(current_position: {x: number, y: number, z: number}, start_time: Date): GcodeProgress {
     if (this.parsed_lines.length === 0) {
       return {
         current_line: 0,
@@ -144,22 +166,88 @@ export class GcodeTimeEstimator {
         elapsed_time_seconds: 0,
         estimated_remaining_seconds: 0,
         percent_complete: 0,
-        current_operation: 'No G-code loaded'
+        current_operation: 'No G-code loaded',
+        current_line_number: 0,
+        current_command: ''
       };
     }
-    
+
     const elapsed_time = (Date.now() - start_time.getTime()) / 1000;
     
-    // Find the index of current line in our parsed lines
-    const current_index = this.parsed_lines.findIndex(line => line.line_number >= current_line_number);
-    const effective_index = current_index >= 0 ? current_index : this.parsed_lines.length - 1;
+    // Find which command the machine is currently executing based on position
+    // Only search forward from last confirmed line (temporal progression constraint)
+    let current_executing_line_index = this.last_confirmed_line_index;
+    let current_operation = 'Starting...';
+    let closest_distance = Infinity;
     
-    // Calculate completed time and remaining time
+    // Search forward from last confirmed position
+    for (let i = this.last_confirmed_line_index; i < this.parsed_lines.length; i++) {
+      const line = this.parsed_lines[i];
+      
+      // Skip lines that don't involve movement
+      if (line.distance === 0) {
+        continue;
+      }
+      
+      // Check if we're close to the path for this line
+      if (i > 0) {
+        const prev_line = this.parsed_lines[i - 1];
+        const path_distance = this.calculate_distance_to_line_segment(
+          current_position,
+          { x: prev_line.x || 0, y: prev_line.y || 0, z: prev_line.z || 0 },
+          { x: line.x || 0, y: line.y || 0, z: line.z || 0 }
+        );
+        
+        // If we're very close to the path, we're executing this command
+        if (path_distance < 0.5) { // Within 0.5mm of the path
+          current_executing_line_index = i;
+          this.last_confirmed_line_index = i;
+          
+          if (line.is_rapid_move) {
+            current_operation = `Rapid move to X${line.x?.toFixed(2)} Y${line.y?.toFixed(2)}`;
+          } else if (line.command.includes('G1')) {
+            current_operation = `Cutting at ${line.feed_rate} mm/min`;
+          } else {
+            current_operation = `Executing: ${line.command}`;
+          }
+          break;
+        }
+      }
+      
+      // Also check distance to target as fallback
+      const target_distance = this.calculate_distance(current_position, {
+        x: line.x || 0,
+        y: line.y || 0, 
+        z: line.z || 0
+      });
+      
+      if (target_distance < closest_distance) {
+        closest_distance = target_distance;
+        current_executing_line_index = i;
+        
+        if (line.is_rapid_move) {
+          current_operation = `Rapid move to X${line.x?.toFixed(2)} Y${line.y?.toFixed(2)}`;
+        } else if (line.command.includes('G1')) {
+          current_operation = `Cutting at ${line.feed_rate} mm/min`;
+        } else {
+          current_operation = `Executing: ${line.command}`;
+        }
+      }
+    }
+    
+    // IMPORTANT: Bounds check to prevent invalid indices
+    current_executing_line_index = Math.max(0, Math.min(current_executing_line_index, this.parsed_lines.length - 1));
+    
+    // Update confirmed position with bounds check
+    this.last_confirmed_line_index = Math.max(this.last_confirmed_line_index, current_executing_line_index);
+    this.last_confirmed_line_index = Math.min(this.last_confirmed_line_index, this.parsed_lines.length - 1);
+    
+    // Calculate progress based on commands completed
     let completed_time = 0;
     let remaining_time = 0;
     
     for (let i = 0; i < this.parsed_lines.length; i++) {
-      if (i < effective_index) {
+      if (i < current_executing_line_index) {
         completed_time += this.parsed_lines[i].estimated_time_seconds;
       } else {
         remaining_time += this.parsed_lines[i].estimated_time_seconds;
@@ -167,32 +255,215 @@ export class GcodeTimeEstimator {
     }
     
     const total_estimated_time = completed_time + remaining_time;
-    const percent_complete = total_estimated_time > 0 ? (completed_time / total_estimated_time) * 100 : 0;
+    const percent_complete = total_estimated_time > 0 
+      ? Math.min(100, Math.max(0, (completed_time / total_estimated_time) * 100))
+      : 0;
+
+    return {
+      current_line: current_executing_line_index + 1, // Use 1-based indexing for display (1/13, 2/13, etc.)
+      total_lines: this.parsed_lines.length,
+      elapsed_time_seconds: elapsed_time,
+      estimated_remaining_seconds: Math.max(0, remaining_time),
+      percent_complete,
+      current_operation,
+      current_line_number: this.parsed_lines[current_executing_line_index]?.line_number || 0, // Original G-code line number
+      current_command: this.parsed_lines[current_executing_line_index]?.original_text || ''
+    };
+  }  /**
+   * Calculate distance from a point to a line segment
+   */
+  private calculate_distance_to_line_segment(
+    point: {x: number, y: number, z: number},
+    line_start: {x: number, y: number, z: number},
+    line_end: {x: number, y: number, z: number}
+  ): number {
+    // Vector from line start to end
+    const line_vec = {
+      x: line_end.x - line_start.x,
+      y: line_end.y - line_start.y,
+      z: line_end.z - line_start.z
+    };
     
-    // Adjust remaining time based on actual elapsed time vs estimated time
-    const time_ratio = elapsed_time > 0 && completed_time > 0 ? elapsed_time / completed_time : 1;
-    const adjusted_remaining_time = remaining_time * time_ratio;
+    // Vector from line start to point
+    const point_vec = {
+      x: point.x - line_start.x,
+      y: point.y - line_start.y,
+      z: point.z - line_start.z
+    };
     
-    // Determine current operation
-    let current_operation = 'Idle';
-    if (effective_index < this.parsed_lines.length) {
-      const current_parsed_line = this.parsed_lines[effective_index];
-      if (current_parsed_line.is_rapid_move) {
-        current_operation = `Rapid move to X${current_parsed_line.x?.toFixed(2)} Y${current_parsed_line.y?.toFixed(2)}`;
-      } else if (current_parsed_line.command.includes('G1')) {
-        current_operation = `Cutting at ${current_parsed_line.feed_rate} mm/min`;
-      } else {
-        current_operation = `Executing: ${current_parsed_line.command}`;
+    // Project point onto line (find parameter t)
+    const line_length_sq = line_vec.x * line_vec.x + line_vec.y * line_vec.y + line_vec.z * line_vec.z;
+    
+    if (line_length_sq === 0) {
+      // Line start and end are the same point
+      return this.calculate_distance(point, line_start);
+    }
+    
+    const t = Math.max(0, Math.min(1, 
+      (point_vec.x * line_vec.x + point_vec.y * line_vec.y + point_vec.z * line_vec.z) / line_length_sq
+    ));
+    
+    // Find closest point on line segment
+    const closest_point = {
+      x: line_start.x + t * line_vec.x,
+      y: line_start.y + t * line_vec.y,
+      z: line_start.z + t * line_vec.z
+    };
+    
+    return this.calculate_distance(point, closest_point);
+  }
+  debug_progress_simulation(gcode_content: string): void {
+    const estimate = this.estimate_gcode_time(gcode_content);
+    
+    console.log('=== Progress Simulation Debug ===');
+    console.log(`Total estimated time: ${estimate.total_time_seconds.toFixed(2)}s`);
+    console.log(`Total lines: ${this.parsed_lines.length}`);
+    
+    // Test different elapsed times
+    const test_times = [0, 0.1, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0];
+    
+    test_times.forEach(elapsed_seconds => {
+      if (elapsed_seconds <= estimate.total_time_seconds + 5) {
+        // Override elapsed time by adjusting start_time
+        const test_start_time = new Date(Date.now() - elapsed_seconds * 1000);
+        const progress = this.calculate_progress(0, test_start_time);
+        
+        console.log(`${elapsed_seconds.toFixed(1)}s: ${progress.percent_complete.toFixed(1)}% - Line ${progress.current_line} - ${progress.current_operation}`);
+      }
+    });
+  }
+  
+  /**
+   * Calculate progress based on current line number
+   */
+  calculate_progress(_current_line_number: number, start_time: Date): GcodeProgress {
+    if (this.parsed_lines.length === 0) {
+      return {
+        current_line: 0,
+        total_lines: 0,
+        elapsed_time_seconds: 0,
+        estimated_remaining_seconds: 0,
+        percent_complete: 0,
+        current_operation: 'No G-code loaded',
+        current_line_number: 0,
+        current_command: ''
+      };
+    }
+    
+    const elapsed_time = (Date.now() - start_time.getTime()) / 1000;
+    
+    // **NEW APPROACH**: Simulate execution line by line using time estimates
+    let cumulative_time = 0;
+    let current_executing_line_index = 0;
+    let current_operation = 'Starting...';
+    
+    // Handle edge case: if no time has elapsed, show first command
+    if (elapsed_time <= 0 && this.parsed_lines.length > 0) {
+      const first_line = this.parsed_lines[0];
+      current_operation = first_line.estimated_time_seconds === 0 
+        ? `Setup: ${first_line.command}`
+        : `Executing: ${first_line.command}`;
+      current_executing_line_index = 0;
+    } else {
+      // Walk through each parsed line and find which one should be executing
+      for (let i = 0; i < this.parsed_lines.length; i++) {
+        const line = this.parsed_lines[i];
+        const line_start_time = cumulative_time;
+        const line_end_time = cumulative_time + line.estimated_time_seconds;
+        
+        // For zero-time commands, they execute "instantly" at their start time
+        if (line.estimated_time_seconds === 0) {
+          if (elapsed_time === line_start_time || (i === 0 && elapsed_time < 0.01)) {
+            current_executing_line_index = i;
+            current_operation = `Setup: ${line.command}`;
+            break;
+          }
+        } else {
+          // For timed commands, check if we're within the execution window
+          if (elapsed_time >= line_start_time && elapsed_time < line_end_time) {
+            current_executing_line_index = i;
+            
+            if (line.is_rapid_move) {
+              current_operation = `Rapid move to X${line.x?.toFixed(2)} Y${line.y?.toFixed(2)}`;
+            } else if (line.command.includes('G1')) {
+              current_operation = `Cutting at ${line.feed_rate} mm/min`;
+            } else {
+              current_operation = `Executing: ${line.command}`;
+            }
+            break;
+          }
+        }
+        
+        cumulative_time = line_end_time;
+        
+        // If we haven't found the current command yet, this might be it (last processed)
+        if (elapsed_time >= line_start_time) {
+          current_executing_line_index = i;
+        }
       }
     }
     
+    // Final check: if we've exceeded all estimated times, we're at the end
+    const total_time = this.parsed_lines.reduce((sum, line) => sum + line.estimated_time_seconds, 0);
+    if (elapsed_time >= total_time && total_time > 0) {
+      current_executing_line_index = this.parsed_lines.length - 1;
+      current_operation = 'Job Complete';
+    }
+    
+    // IMPORTANT: Bounds check to prevent invalid indices (same as position-based method)
+    current_executing_line_index = Math.max(0, Math.min(current_executing_line_index, this.parsed_lines.length - 1));
+    
+    // Fallback: if we still don't have a valid operation, determine it from current line
+    if (current_operation === 'Starting...' && current_executing_line_index < this.parsed_lines.length) {
+      const line = this.parsed_lines[current_executing_line_index];
+      if (line.estimated_time_seconds === 0) {
+        current_operation = `Setup: ${line.command}`;
+      } else if (line.is_rapid_move) {
+        current_operation = `Rapid move to X${line.x?.toFixed(2)} Y${line.y?.toFixed(2)}`;
+      } else if (line.command.includes('G1')) {
+        current_operation = `Cutting at ${line.feed_rate} mm/min`;
+      } else {
+        current_operation = `Executing: ${line.command}`;
+      }
+    }
+    
+    // Calculate remaining time from current position
+    let remaining_time = 0;
+    for (let i = current_executing_line_index; i < this.parsed_lines.length; i++) {
+      remaining_time += this.parsed_lines[i].estimated_time_seconds;
+    }
+    
+    // Adjust remaining time if we're partway through current line
+    if (current_executing_line_index < this.parsed_lines.length) {
+      const current_line = this.parsed_lines[current_executing_line_index];
+      const line_start_time = cumulative_time - current_line.estimated_time_seconds;
+      const time_into_current_line = elapsed_time - line_start_time;
+      
+      if (time_into_current_line > 0 && current_line.estimated_time_seconds > 0) {
+        const remaining_in_current_line = Math.max(0, current_line.estimated_time_seconds - time_into_current_line);
+        remaining_time = remaining_in_current_line;
+        
+        // Add time for all subsequent lines
+        for (let i = current_executing_line_index + 1; i < this.parsed_lines.length; i++) {
+          remaining_time += this.parsed_lines[i].estimated_time_seconds;
+        }
+      }
+    }
+    
+    const total_estimated_time = this.parsed_lines.reduce((sum, line) => sum + line.estimated_time_seconds, 0);
+    const percent_complete = total_estimated_time > 0 
+      ? Math.min(100, Math.max(0, (elapsed_time / total_estimated_time) * 100))
+      : 0;
+    
     return {
-      current_line: current_line_number,
+      current_line: current_executing_line_index + 1, // Use 1-based indexing for display (same as position-based method)
       total_lines: this.parsed_lines.length,
       elapsed_time_seconds: elapsed_time,
-      estimated_remaining_seconds: Math.max(0, adjusted_remaining_time),
-      percent_complete: Math.min(100, Math.max(0, percent_complete)),
-      current_operation
+      estimated_remaining_seconds: Math.max(0, remaining_time),
+      percent_complete,
+      current_operation,
+      current_line_number: this.parsed_lines[current_executing_line_index]?.line_number || 0,
+      current_command: this.parsed_lines[current_executing_line_index]?.original_text || ''
     };
   }
   
@@ -227,9 +498,17 @@ export class GcodeTimeEstimator {
            `Est. completion: ${estimate.estimated_completion?.toLocaleTimeString()}`;
   }
   
+  /**
+   * Reset temporal progression tracking for a new job
+   */
+  reset_temporal_progression(): void {
+    this.last_confirmed_line_index = 0;
+  }
+
   private reset_state(): void {
     this.current_position = { x: 0, y: 0, z: 0 };
     this.current_feed_rate = this.machine_params.default_feed_rate;
+    this.last_confirmed_line_index = 0; // Reset temporal progression tracking
   }
   
   private parse_gcode_line(line: string, line_number: number): GcodeLine | null {
@@ -342,8 +621,8 @@ export class GcodeTimeEstimator {
 export class GcodeJobProgressTracker {
   private estimator: GcodeTimeEstimator;
   private job_start_time?: Date;
-  private current_line_number = 0;
   private is_running = false;
+  private last_known_position: {x: number, y: number, z: number} | null = null;
   
   constructor(estimator: GcodeTimeEstimator) {
     this.estimator = estimator;
@@ -351,12 +630,17 @@ export class GcodeJobProgressTracker {
   
   start_job(): void {
     this.job_start_time = new Date();
-    this.current_line_number = 0;
     this.is_running = true;
+    this.estimator.reset_temporal_progression(); // Reset temporal progression for new job
   }
   
-  update_current_line(line_number: number): void {
-    this.current_line_number = line_number;
+  update_buffer_status(_planner_blocks: number, _rx_bytes: number): void {
+    // No longer needed - we use pure time-based simulation or position-based tracking
+    // Buffer status was unreliable for progress tracking
+  }
+  
+  update_position(position: {x: number, y: number, z: number}): void {
+    this.last_known_position = position;
   }
   
   pause_job(): void {
@@ -369,13 +653,18 @@ export class GcodeJobProgressTracker {
   
   stop_job(): void {
     this.is_running = false;
-    this.current_line_number = 0;
   }
   
   get_current_progress(): GcodeProgress | null {
     if (!this.job_start_time) return null;
     
-    return this.estimator.calculate_progress(this.current_line_number, this.job_start_time);
+    // Use position-based tracking if we have position data, otherwise fall back to time-based
+    if (this.last_known_position) {
+      return this.estimator.calculate_progress_by_position(this.last_known_position, this.job_start_time);
+    } else {
+      // Fallback to time-based simulation
+      return this.estimator.calculate_progress(0, this.job_start_time);
+    }
   }
   
   is_job_running(): boolean {
