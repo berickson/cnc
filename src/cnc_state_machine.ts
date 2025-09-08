@@ -1,4 +1,4 @@
-// CNC State Machine - Event-driven state management for UI and operations
+// CNC State Machine - Event-driven state management for UI    // Initialization complete - no logging neededoperations
 
 export enum CncState {
   DISCONNECTED = 'disconnected',
@@ -6,6 +6,7 @@ export enum CncState {
   IDLE = 'idle',
   JOG_REQUESTED = 'jog_requested',
   RUNNING = 'running', // Any machine movement: jog, home, presets, probing, jobs
+  HOLD = 'hold', // Emergency stop / feed hold - machine is stopped but can be resumed
   ALARM = 'alarm'
 }
 
@@ -32,6 +33,7 @@ export enum EventType {
   STATUS_JOG = 'status_jog', 
   STATUS_RUN = 'status_run',
   STATUS_HOME = 'status_home',
+  STATUS_HOLD = 'status_hold',
   STATUS_ALARM = 'status_alarm',
   
   // Special events
@@ -84,32 +86,23 @@ export class CncStateMachine {
     // Get log_message function
     const log_message = (window as any).log_message || console.log;
     
+    // Debug logging for state transitions
+    log_message(`🔄 State transition: ${old_state} → ${new_state} (event: ${event.type})`, 'info');
+    
     // Special handling for movement state entry/exit
     if (new_state === CncState.RUNNING && old_state !== CncState.RUNNING) {
-      // Entering RUNNING state
+      // Entering RUNNING state - only track homing timer
       if (event.type === EventType.HOME_BUTTON_CLICKED) {
         this.homing_start_time = Date.now();
-        log_message('🏠 Entering RUNNING state: Homing operation started', 'info');
-      } else if (event.type === EventType.JOG_BUTTON_CLICKED) {
-        log_message('🎮 Entering RUNNING state: Jog operation started', 'info');
-      } else if (event.type === EventType.STATUS_RUN) {
-        log_message('🔄 Entering RUNNING state: Machine reporting Run status', 'info');
-      } else if (event.type === EventType.STATUS_JOG) {
-        log_message('🎮 Entering RUNNING state: Machine reporting Jog status', 'info'); 
-      } else if (event.type === EventType.STATUS_HOME) {
-        log_message('🏠 Entering RUNNING state: Machine reporting Home status', 'info');
-      } else {
-        log_message(`🔄 Entering RUNNING state: ${event.type}`, 'info');
       }
     } else if (old_state === CncState.RUNNING && new_state !== CncState.RUNNING) {
       // Exiting RUNNING state
       const was_homing = this.homing_start_time !== null;
       if (was_homing) {
         const elapsed = this.homing_start_time ? Date.now() - this.homing_start_time : 0;
-        log_message(`🏠 Exiting RUNNING state: Homing completed in ${elapsed}ms`, 'success');
-      } else {
-        log_message('✅ Exiting RUNNING state: Operation completed', 'success');
+        log_message(`🏠 Homing completed in ${elapsed}ms`, 'success');
       }
+      this.homing_start_time = null;
       this.homing_start_time = null;
     }
     
@@ -142,6 +135,10 @@ export class CncStateMachine {
           
         case CncState.RUNNING:
           this.handle_running_state(event);
+          break;
+          
+        case CncState.HOLD:
+          this.handle_hold_state(event);
           break;
           
         case CncState.ALARM:
@@ -226,6 +223,11 @@ export class CncStateMachine {
         break;
       case EventType.STATUS_ALARM:
         this.transition_to(CncState.ALARM, event);
+        break;
+      case EventType.STATUS_HOLD:
+        // Machine is in hold state - transition from idle to hold
+        log_message('⏸️ Detected hold state from idle (machine was paused)', 'info');
+        this.transition_to(CncState.HOLD, event);
         break;
     }
   }
@@ -322,6 +324,10 @@ export class CncStateMachine {
         log_message('❌ Alarm during operation', 'error');
         this.transition_to(CncState.ALARM, event);
         break;
+      case EventType.STATUS_HOLD:
+        log_message('⏸️ Emergency stop/hold during operation', 'info');
+        this.transition_to(CncState.HOLD, event);
+        break;
       case EventType.HOMING_COMPLETE:
         // Explicit homing completion signal (fallback)
         log_message('✅ Homing completed', 'success');
@@ -346,6 +352,39 @@ export class CncStateMachine {
     }
   }
 
+  private handle_hold_state(event: CncEvent): void {
+    const log_message = (window as any).log_message || console.log;
+    
+    switch (event.type) {
+      case EventType.STATUS_HOLD:
+        // Stay in hold state - this is expected while held
+        log_message('⏸️ Machine is in hold state (paused)...', 'info');
+        break;
+      case EventType.STATUS_IDLE:
+        // Hold released, transition back to idle
+        log_message('▶️ Hold released, machine returned to idle', 'info');
+        this.transition_to(CncState.IDLE, event);
+        break;
+      case EventType.STATUS_RUN:
+        // Cycle start pressed, resuming operation
+        log_message('▶️ Resuming from hold...', 'info');
+        this.transition_to(CncState.RUNNING, event);
+        break;
+      case EventType.DISCONNECT_BUTTON_CLICKED:
+        log_message('🔌 Disconnecting from hold state...', 'info');
+        this.transition_to(CncState.DISCONNECTED, event);
+        break;
+      // Block other user actions while in hold
+      case EventType.HOME_BUTTON_CLICKED:
+        log_message('🚫 Home blocked: machine is in hold state', 'error');
+        break;
+      case EventType.JOG_BUTTON_CLICKED:
+        log_message('🚫 Jog blocked: machine is in hold state', 'error');
+        break;
+      // Stay in hold state for other events
+    }
+  }
+
   // Helper methods for UI state queries
   is_connected(): boolean {
     return this.current_state !== CncState.DISCONNECTED && this.current_state !== CncState.CONNECTING;
@@ -355,7 +394,8 @@ export class CncStateMachine {
     return [
       CncState.CONNECTING,
       CncState.JOG_REQUESTED,
-      CncState.RUNNING
+      CncState.RUNNING,
+      CncState.HOLD
     ].includes(this.current_state);
   }
 

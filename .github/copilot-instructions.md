@@ -3,3 +3,4 @@
 - If there are options for optimization, present them to Brian for approval before implementing.
 - The project uses pnpm and Tauri
 - use snake_case for variable and function and method names and file names in all code, class names can be InitCaps
+- there is no f12 browser console in a tauri app, you'll need to use the gui log or a file

@@ -130,6 +130,10 @@ let work_z_pos: HTMLElement | null;
 let home_button: HTMLButtonElement | null;
 let clear_alarm_button: HTMLButtonElement | null;
 let copy_log_button: HTMLButtonElement | null;
+let emergency_stop_button: HTMLButtonElement | null;
+let resume_button: HTMLButtonElement | null;
+let cancel_button: HTMLButtonElement | null;
+let resume_panel: HTMLElement | null;
 let jog_buttons: { [key: string]: HTMLButtonElement | null } = {};
 let step_size_input: HTMLInputElement | null;
 let zero_buttons: { [key: string]: HTMLButtonElement | null } = {};
@@ -185,6 +189,9 @@ function update_button_states(): void {
   if (clear_alarm_button) clear_alarm_button.disabled = !can_clear_alarm;
   if (save_xy_preset_button) save_xy_preset_button.disabled = !connected;
   
+  // Emergency stop should be available whenever connected (highest priority)
+  if (emergency_stop_button) emergency_stop_button.disabled = !connected;
+  
   // Jog buttons
   Object.values(jog_buttons).forEach(button => {
     if (button) button.disabled = !can_jog;
@@ -238,10 +245,33 @@ function update_status_display(state: CncState): void {
         current_status_details.connection_status = 'Running Operation';
       }
       break;
+    case CncState.HOLD:
+      status_indicator.className = 'status-indicator hold';
+      status_text.textContent = 'Hold';
+      current_status_details.connection_status = 'Hold State - Paused';
+      break;
+  }
+  
+  // Update resume panel visibility based on state
+  if (resume_panel) {
+    resume_panel.style.display = state === CncState.HOLD ? 'block' : 'none';
+  }
+  if (resume_button) {
+    resume_button.disabled = state !== CncState.HOLD || !is_connected;
+  }
+  if (cancel_button) {
+    cancel_button.disabled = state !== CncState.HOLD || !is_connected;
   }
   
   current_status_details.last_updated = new Date().toLocaleTimeString();
   current_status_details.state_machine_state = state;
+}
+
+// Helper function to handle state machine events and update UI
+function handle_state_event_and_update_ui(event: CncEvent) {
+  state_machine.handle_event(event);
+  update_button_states();
+  update_status_display(state_machine.get_current_state());
 }
 
 // Status details modal functions
@@ -296,16 +326,16 @@ function hide_status_details() {
 
 // Debug functions for testing
 function debug_cnc_state() {
-  log_message(`🔍 DEBUG STATE REPORT:`, 'info');
-  log_message(`   Current state: ${state_machine.get_current_state()}`, 'info');
-  log_message(`   Can jog: ${state_machine.can_jog()}`, 'info');
-  log_message(`   Can home: ${state_machine.can_home()}`, 'info');
-  log_message(`   Is connected: ${state_machine.is_connected()}`, 'info');
-  log_message(`   Is busy: ${state_machine.is_busy()}`, 'info');
+  console.log(`🔍 DEBUG STATE REPORT:`);
+  console.log(`   Current state: ${state_machine.get_current_state()}`);
+  console.log(`   Can jog: ${state_machine.can_jog()}`);
+  console.log(`   Can home: ${state_machine.can_home()}`);
+  console.log(`   Is connected: ${state_machine.is_connected()}`);
+  console.log(`   Is busy: ${state_machine.is_busy()}`);
 }
 
 function debug_force_idle() {
-  log_message('🔧 DEBUG: Forcing state to IDLE for testing', 'info');
+  console.log('🔧 DEBUG: Forcing state to IDLE for testing');
   state_machine.handle_event({ type: EventType.STATUS_IDLE, data: {} });
 }
 
@@ -615,32 +645,39 @@ async function updateMachineStatus() {
         
         // Send status events to state machine with better state detection
         if (parsed.state === 'Idle') {
-          state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_IDLE, data: parsed });
         } else if (parsed.state === 'Jog') {
-          state_machine.handle_event({ type: EventType.STATUS_JOG, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_JOG, data: parsed });
         } else if (parsed.state === 'Run') {
-          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_RUN, data: parsed });
         } else if (parsed.state === 'Home') {
-          state_machine.handle_event({ type: EventType.STATUS_HOME, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_HOME, data: parsed });
         } else if (parsed.state.includes('Alarm')) {
-          state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_ALARM, data: parsed });
         } else if (parsed.state === 'Hold' || parsed.state === 'Hold:0' || parsed.state === 'Hold:1') {
-          // Feed hold states - machine is paused but still in a running operation
+          // Feed hold states - machine is paused/held
           log_message(`⏸️ Machine in hold state: ${parsed.state}`, 'info');
-          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+          
+          // Check if this is the first time we're detecting hold state
+          const current_state = state_machine.get_current_state();
+          if (current_state !== CncState.HOLD) {
+            log_message('🔍 Detected hold state on status check - machine was previously paused', 'info');
+          }
+          
+          handle_state_event_and_update_ui({ type: EventType.STATUS_HOLD, data: parsed });
         } else if (parsed.state === 'Door' || parsed.state === 'Door:0' || parsed.state === 'Door:1' || 
                    parsed.state === 'Door:2' || parsed.state === 'Door:3') {
           // Safety door states - machine is stopped
           log_message(`🚪 Safety door triggered: ${parsed.state}`, 'error');
-          state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_ALARM, data: parsed });
         } else if (parsed.state === 'Check') {
           // Check mode - machine is processing but not moving
           log_message(`✅ Check mode active: ${parsed.state}`, 'info');
-          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_RUN, data: parsed });
         } else if (parsed.state === 'Sleep') {
           // Sleep mode - treat as idle
           log_message(`😴 Machine in sleep mode: ${parsed.state}`, 'info');
-          state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
+          handle_state_event_and_update_ui({ type: EventType.STATUS_IDLE, data: parsed });
         } else {
           log_message(`❓ Unknown status state: ${parsed.state}`, 'error');
           // For any other state, assume it's a running state if not obviously idle/alarm
@@ -732,6 +769,70 @@ async function clear_alarm() {
     }
   } catch (error) {
     log_message(`Reset failed: ${error}`, 'error');
+  }
+}
+
+async function emergency_stop() {
+  if (!is_connected) {
+    log_message('🚫 Not connected to CNC', 'error');
+    return;
+  }
+  
+  log_message('🚨 EMERGENCY STOP ACTIVATED', 'error');
+  log_message(`🔍 DEBUG: Current state before E-stop: ${state_machine.get_current_state()}`, 'info');
+  
+  try {
+    // Send emergency stop command immediately
+    const response = await CncManager.emergency_stop();
+    log_message(`Emergency stop sent: ${response.trim()}`, 'error');
+    log_message(`🔍 DEBUG: Current state after E-stop command: ${state_machine.get_current_state()}`, 'info');
+    
+    // Also notify state machine if needed
+    // The emergency stop should force the machine to alarm state
+    // which will be detected by status polling
+    
+  } catch (error) {
+    log_message(`❌ Emergency stop failed: ${error}`, 'error');
+  }
+}
+
+async function resume_from_hold() {
+  if (!is_connected) {
+    log_message('🚫 Not connected to CNC', 'error');
+    return;
+  }
+  
+  log_message('▶️ Resuming from hold...', 'info');
+  
+  try {
+    // Send cycle start command (resume from hold)
+    const response = await CncManager.resume();
+    log_message(`Resume command sent: ${response.trim()}`, 'info');
+    
+    // State machine will handle the transition when status is received
+    
+  } catch (error) {
+    log_message(`❌ Resume failed: ${error}`, 'error');
+  }
+}
+
+async function cancel_operation() {
+  if (!is_connected) {
+    log_message('🚫 Not connected to CNC', 'error');
+    return;
+  }
+  
+  log_message('🛑 Canceling operation and resetting...', 'info');
+  
+  try {
+    // Send soft reset command (Ctrl+X) to cancel operation and return to idle
+    const response = await CncManager.reset();
+    log_message(`Cancel/Reset command sent: ${response.trim()}`, 'info');
+    
+    // State machine will handle the transition when status is received
+    
+  } catch (error) {
+    log_message(`❌ Cancel failed: ${error}`, 'error');
   }
 }
 
@@ -1425,6 +1526,10 @@ window.addEventListener("DOMContentLoaded", () => {
   home_button = document.getElementById("home_button") as HTMLButtonElement;
   clear_alarm_button = document.getElementById("clear_alarm_button") as HTMLButtonElement;
   copy_log_button = document.getElementById("copy_log_button") as HTMLButtonElement;
+  emergency_stop_button = document.getElementById("emergency_stop_button") as HTMLButtonElement;
+  resume_button = document.getElementById("resume_button") as HTMLButtonElement;
+  cancel_button = document.getElementById("cancel_button") as HTMLButtonElement;
+  resume_panel = document.getElementById("resume_panel") as HTMLElement;
   step_size_input = document.getElementById("step_size_input") as HTMLInputElement;
   
   // Save XY preset elements
@@ -1481,6 +1586,18 @@ window.addEventListener("DOMContentLoaded", () => {
   
   if (copy_log_button) {
     copy_log_button.addEventListener("click", copy_log);
+  }
+  
+  if (emergency_stop_button) {
+    emergency_stop_button.addEventListener("click", emergency_stop);
+  }
+  
+  if (resume_button) {
+    resume_button.addEventListener("click", resume_from_hold);
+  }
+  
+  if (cancel_button) {
+    cancel_button.addEventListener("click", cancel_operation);
   }
   
   if (toggle_log_button) {

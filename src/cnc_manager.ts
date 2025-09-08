@@ -134,6 +134,11 @@ export class CncManager {
     return await this.send_command("!");
   }
 
+  // Resume from feed hold (cycle start)
+  static async resume(): Promise<string> {
+    return await this.send_command("~");
+  }
+
   /**
    * Translate GRBL error responses to human-readable format
    */
