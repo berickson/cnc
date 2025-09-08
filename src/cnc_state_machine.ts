@@ -200,12 +200,10 @@ export class CncStateMachine {
         // Transition to running immediately when button is clicked
         this.transition_to(CncState.RUNNING, event);
         break;
-      case EventType.JOG_BUTTON_CLICKED:
-        this.transition_to(CncState.JOG_REQUESTED, event);
-        break;
       case EventType.STATUS_ALARM:
         this.transition_to(CncState.ALARM, event);
         break;
+      // JOG_BUTTON_CLICKED removed - jog now uses STATUS_JOG for simplified transitions
       // STATUS_IDLE is expected and doesn't change state
     }
   }

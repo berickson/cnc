@@ -198,6 +198,7 @@ function update_status_display(state: CncState): void {
       current_status_details.connection_status = 'Connected';
       break;
     case CncState.JOG_REQUESTED:
+      // Note: This state is no longer used with simplified jog status
       status_text.textContent = 'Jog Requested';
       break;
     case CncState.ALARM:
@@ -634,19 +635,16 @@ function send_jog_command(axis: string, direction: number) {
   
   log_message(`📤 Sending jog command: ${axis} ${distance}`, 'info');
   
-  // Send event to state machine
-  state_machine.handle_event({ 
-    type: EventType.JOG_BUTTON_CLICKED, 
-    data: { axis, direction, distance } 
-  });
+  // Don't send event to state machine - let STATUS_JOG trigger the transition
+  // This matches the behavior of presets for simplified status
   
   // Use non-blocking jog command
   CncManager.jog_no_wait(axis, distance).then(() => {
     log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: command sent`, 'success');
-    state_machine.handle_event({ type: EventType.COMMAND_SUCCESS });
+    // No state machine event - let GRBL status drive the state transitions
   }).catch(error => {
     log_message(`❌ Jog error: ${error}`, 'error');
-    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
+    // For errors, we could still send a failure event, but typically GRBL status will handle this
   });
 }
 
