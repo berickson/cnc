@@ -172,22 +172,20 @@ export class CncStateMachine {
         // Normal idle status - no action needed
         break;
       case EventType.STATUS_RUN:
-        // G-code started running - transition to running state
-        this.transition_to(CncState.RUNNING, event);
-        break;
       case EventType.STATUS_JOG:
-        // Jog started - transition to running state
-        this.transition_to(CncState.RUNNING, event);
-        break;
       case EventType.STATUS_HOME:
-        // Homing started - transition to running state
-        this.transition_to(CncState.RUNNING, event);
+        // These status events no longer trigger state changes since we transition
+        // immediately when commands are sent for better responsiveness
         break;
       case EventType.DISCONNECT_BUTTON_CLICKED:
         this.transition_to(CncState.DISCONNECTED, event);
         break;
       case EventType.HOME_BUTTON_CLICKED:
         // Transition to running immediately when button is clicked
+        this.transition_to(CncState.RUNNING, event);
+        break;
+      case EventType.JOG_BUTTON_CLICKED:
+        // Transition to running immediately when jog is sent
         this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.STATUS_ALARM:

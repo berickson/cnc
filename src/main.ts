@@ -623,16 +623,18 @@ function send_jog_command(axis: string, direction: number) {
   
   log_message(`📤 Sending jog command: ${axis} ${distance}`, 'info');
   
-  // Don't send event to state machine - let STATUS_JOG trigger the transition
-  // This matches the behavior of presets for simplified status
+  // Transition to RUNNING immediately for responsive UI
+  state_machine.handle_event({ 
+    type: EventType.JOG_BUTTON_CLICKED, 
+    data: { axis, direction, distance } 
+  });
   
   // Use non-blocking jog command
   CncManager.jog_no_wait(axis, distance).then(() => {
     log_message(`Jog ${axis}${distance > 0 ? '+' : ''}${distance}: command sent`, 'success');
-    // No state machine event - let GRBL status drive the state transitions
   }).catch(error => {
     log_message(`❌ Jog error: ${error}`, 'error');
-    // For errors, we could still send a failure event, but typically GRBL status will handle this
+    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
   });
 }
 
@@ -701,6 +703,17 @@ async function set_work_zero(axes: string) {
 async function go_to_work_zero() {
   if (!is_connected) return;
   
+  if (!state_machine.can_jog()) {
+    log_message('🚫 Movement blocked by state machine', 'error');
+    return;
+  }
+
+  // Transition to RUNNING immediately for responsive UI
+  state_machine.handle_event({ 
+    type: EventType.JOG_BUTTON_CLICKED, 
+    data: { action: 'go_work_zero' } 
+  });
+  
   try {
     log_message("Moving to work coordinate X0 Y0 (preserving Z)...");
     const response = await CncManager.send_command("G0 X0 Y0");
@@ -710,16 +723,29 @@ async function go_to_work_zero() {
     if (CncManager.contains_error(trimmedResponse)) {
       const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Go work zero: ${translatedResponse}`, 'error');
+      state_machine.handle_event({ type: EventType.COMMAND_FAILED });
     } else {
       log_message(`Go work zero: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
     log_message(`Go work zero failed: ${error}`, 'error');
+    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
   }
 }
 
 async function go_to_machine_zero() {
   if (!is_connected) return;
+  
+  if (!state_machine.can_jog()) {
+    log_message('🚫 Movement blocked by state machine', 'error');
+    return;
+  }
+
+  // Transition to RUNNING immediately for responsive UI
+  state_machine.handle_event({ 
+    type: EventType.JOG_BUTTON_CLICKED, 
+    data: { action: 'go_machine_zero' } 
+  });
   
   try {
     log_message("Moving to machine coordinate X0 Y0 (preserving Z)...");
@@ -730,11 +756,13 @@ async function go_to_machine_zero() {
     if (CncManager.contains_error(trimmedResponse)) {
       const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Go machine zero: ${translatedResponse}`, 'error');
+      state_machine.handle_event({ type: EventType.COMMAND_FAILED });
     } else {
       log_message(`Go machine zero: ${trimmedResponse}`, 'success');
     }
   } catch (error) {
     log_message(`Go machine zero failed: ${error}`, 'error');
+    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
   }
 }
 
@@ -841,6 +869,17 @@ async function gotoSavedXyPosition(name: string) {
     return;
   }
 
+  if (!state_machine.can_jog()) {
+    log_message('🚫 Movement blocked by state machine', 'error');
+    return;
+  }
+
+  // Transition to RUNNING immediately for responsive UI
+  state_machine.handle_event({ 
+    type: EventType.JOG_BUTTON_CLICKED, // Reuse jog event type for movement
+    data: { preset: name, coords } 
+  });
+
   try {
     // Move to the saved machine coordinates using G53 (machine coordinate system)
     const response = await CncManager.send_command(`G53 G0 X${coords.x} Y${coords.y}`);
@@ -850,11 +889,13 @@ async function gotoSavedXyPosition(name: string) {
     if (CncManager.contains_error(trimmedResponse)) {
       const translatedResponse = CncManager.translate_response(trimmedResponse);
       log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${translatedResponse}`, 'error');
+      state_machine.handle_event({ type: EventType.COMMAND_FAILED });
     } else {
       log_message(`Moving to "${name}" (machine coords): X${coords.x} Y${coords.y} - ${trimmedResponse}`, 'success');
     }
   } catch (error) {
     log_message(`Failed to move to "${name}": ${error}`, 'error');
+    state_machine.handle_event({ type: EventType.COMMAND_FAILED });
   }
 }
 
