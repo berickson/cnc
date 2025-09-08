@@ -184,6 +184,33 @@
       font-size: 14px;
     }
     
+    /* Progress bar animations */
+    .progress-bar-animated {
+      background: linear-gradient(-45deg, transparent 33%, rgba(255,255,255,0.1) 33%, rgba(255,255,255,0.1) 66%, transparent 66%), #007bff;
+      background-size: 30px 30px;
+      animation: progress-bar-stripes 1s linear infinite;
+    }
+    
+    @keyframes progress-bar-stripes {
+      0% { background-position: 30px 0; }
+      100% { background-position: 0 0; }
+    }
+    
+    /* Time estimate styling */
+    .time-estimate {
+      color: #007bff;
+      font-weight: 500;
+      font-size: 11px;
+    }
+    
+    .time-estimate.running {
+      color: #28a745;
+    }
+    
+    .time-estimate.paused {
+      color: #ffc107;
+    }
+    
     button {
       background-color: #007bff;
       color: white;
@@ -665,7 +692,19 @@
         
         <div id="selected_file_info" style="display: none; background: #e8f4fd; padding: 8px; border-radius: 4px; margin-bottom: 8px; border-left: 3px solid #007bff;">
           <div style="font-size: 12px; font-weight: bold; margin-bottom: 4px;" id="selected_file_name">No file selected</div>
-          <div style="font-size: 11px; color: #666;" id="selected_file_details">Select a file from the list above</div>
+          <div style="font-size: 11px; color: #666; margin-bottom: 4px;" id="selected_file_details">Select a file from the list above</div>
+          <div style="font-size: 11px; color: #007bff; margin-bottom: 4px;" id="selected_file_time_estimate">Analyzing...</div>
+          <div id="job_progress_info" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid #cce7ff;">
+            <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">Job Progress</div>
+            <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
+              <span id="progress_percent">0%</span>
+              <span id="progress_time_info">0s / 0s</span>
+            </div>
+            <div style="background: #e9ecef; height: 6px; border-radius: 3px; margin-bottom: 4px;">
+              <div id="progress_bar" style="background: #007bff; height: 100%; border-radius: 3px; width: 0%; transition: width 0.3s;"></div>
+            </div>
+            <div style="font-size: 10px; color: #666;" id="progress_operation">Idle</div>
+          </div>
         </div>
         
         <div style="font-size: 11px; color: #666;">

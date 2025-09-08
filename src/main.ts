@@ -6,6 +6,7 @@ import { appDataDir, join } from "@tauri-apps/api/path";
 import { CncManager, type CncDevice } from "./cnc_manager";
 import { RunStatistics, time_async, time_sync } from "./performance_stats";
 import { CncStateMachine, CncState, EventType, type CncEvent } from "./cnc_state_machine";
+import { GcodeTimeEstimator, GcodeJobProgressTracker, type GcodeTimeEstimate } from "./gcode_time_estimator";
 
 // Performance monitoring stats
 const status_update_stats = new RunStatistics("CNC Status Update");
@@ -151,12 +152,25 @@ let gcode_files_list: HTMLElement | null;
 let selected_file_info: HTMLElement | null;
 let selected_file_name: HTMLElement | null;
 let selected_file_details: HTMLElement | null;
+let selected_file_time_estimate: HTMLElement | null;
+
+// Job progress elements
+let job_progress_info: HTMLElement | null;
+let progress_percent: HTMLElement | null;
+let progress_time_info: HTMLElement | null;
+let progress_bar: HTMLElement | null;
+let progress_operation: HTMLElement | null;
 
 // G-code file state
 let current_gcode_content: string | null = null;
 let current_gcode_filename: string | null = null;
 let gcode_files_in_database: string[] = [];
 let selected_file_index: number = -1;
+
+// G-code time estimation
+let gcode_time_estimator: GcodeTimeEstimator | null = null;
+let current_job_progress_tracker: GcodeJobProgressTracker | null = null;
+let current_time_estimate: GcodeTimeEstimate | null = null;
 
 // Global state management
 const state_machine = new CncStateMachine();
@@ -645,10 +659,27 @@ async function updateMachineStatus() {
         
         // Send status events to state machine with better state detection
         if (parsed.state === 'Idle') {
+          // Check if we have a running job that just completed
+          if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+            log_message('🎉 G-code job completed!', 'success');
+            current_job_progress_tracker.stop_job();
+            update_file_selection_ui(); // Hide progress display
+          }
           handle_state_event_and_update_ui({ type: EventType.STATUS_IDLE, data: parsed });
         } else if (parsed.state === 'Jog') {
           handle_state_event_and_update_ui({ type: EventType.STATUS_JOG, data: parsed });
         } else if (parsed.state === 'Run') {
+          // Update job progress if we have an active job
+          if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+            // Simple progress simulation based on time
+            // In a real implementation, you'd track actual G-code line numbers
+            const progress = current_job_progress_tracker.get_current_progress();
+            if (progress && progress.elapsed_time_seconds > 0) {
+              // Estimate current line based on elapsed time ratio
+              const estimated_line = Math.floor((progress.elapsed_time_seconds / (progress.elapsed_time_seconds + progress.estimated_remaining_seconds)) * progress.total_lines);
+              current_job_progress_tracker.update_current_line(estimated_line);
+            }
+          }
           handle_state_event_and_update_ui({ type: EventType.STATUS_RUN, data: parsed });
         } else if (parsed.state === 'Home') {
           handle_state_event_and_update_ui({ type: EventType.STATUS_HOME, data: parsed });
@@ -657,6 +688,12 @@ async function updateMachineStatus() {
         } else if (parsed.state === 'Hold' || parsed.state === 'Hold:0' || parsed.state === 'Hold:1') {
           // Feed hold states - machine is paused/held
           log_message(`⏸️ Machine in hold state: ${parsed.state}`, 'info');
+          
+          // Pause job tracking if active
+          if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+            current_job_progress_tracker.pause_job();
+            log_message('⏸️ Job progress paused', 'info');
+          }
           
           // Check if this is the first time we're detecting hold state
           const current_state = state_machine.get_current_state();
@@ -809,6 +846,12 @@ async function resume_from_hold() {
     const response = await CncManager.resume();
     log_message(`Resume command sent: ${response.trim()}`, 'info');
     
+    // Resume job tracking if we have an active job
+    if (current_job_progress_tracker) {
+      current_job_progress_tracker.resume_job();
+      log_message('▶️ Job progress resumed', 'info');
+    }
+    
     // State machine will handle the transition when status is received
     
   } catch (error) {
@@ -825,6 +868,13 @@ async function cancel_operation() {
   log_message('🛑 Canceling operation and resetting...', 'info');
   
   try {
+    // Stop job tracking if active
+    if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+      current_job_progress_tracker.stop_job();
+      log_message('🛑 Job canceled', 'info');
+      update_file_selection_ui(); // Hide progress display
+    }
+    
     // Send soft reset command (Ctrl+X) to cancel operation and return to idle
     const response = await CncManager.reset();
     log_message(`Cancel/Reset command sent: ${response.trim()}`, 'info');
@@ -1181,6 +1231,13 @@ async function load_gcode_file() {
     const content = await readTextFile(selected);
     const filename = selected.split('/').pop() || 'unknown.gcode';
     
+    // Estimate time for the loaded G-code
+    log_message(`Analyzing G-code for time estimation...`, 'info');
+    const estimator = new GcodeTimeEstimator();
+    const time_estimate = estimator.estimate_gcode_time(content);
+    const time_summary = estimator.get_time_summary(time_estimate);
+    log_message(`Time estimate for "${filename}": ${time_summary}`, 'success');
+    
     // Create gcode directory in app data if it doesn't exist
     const app_data_path = await appDataDir();
     const gcode_dir = await join(app_data_path, 'gcode');
@@ -1224,6 +1281,15 @@ async function send_gcode_to_cnc() {
   if (!state_machine.is_connected()) {
     log_message('Not connected to CNC', 'error');
     return;
+  }
+  
+  // Start job progress tracking
+  if (current_job_progress_tracker) {
+    current_job_progress_tracker.start_job();
+    log_message(`Job started: ${current_gcode_filename}`, 'info');
+    
+    // Show progress UI
+    update_file_selection_ui();
   }
   
   // TODO: This will send the entire G-code at once
@@ -1323,6 +1389,13 @@ async function select_file(index: number) {
     
     current_gcode_content = await readTextFile(file_path);
     
+    // Estimate time for the selected G-code
+    if (current_gcode_content) {
+      gcode_time_estimator = new GcodeTimeEstimator();
+      current_time_estimate = gcode_time_estimator.estimate_gcode_time(current_gcode_content);
+      current_job_progress_tracker = new GcodeJobProgressTracker(gcode_time_estimator);
+    }
+    
     // Update UI
     update_files_list_ui(); // Refresh to show selection
     update_file_selection_ui();
@@ -1345,6 +1418,9 @@ function clear_file_selection() {
   selected_file_index = -1;
   current_gcode_filename = null;
   current_gcode_content = null;
+  gcode_time_estimator = null;
+  current_time_estimate = null;
+  current_job_progress_tracker = null;
   
   update_files_list_ui();
   update_file_selection_ui();
@@ -1363,6 +1439,7 @@ function update_file_selection_ui() {
   
   if (selected_file_index === -1 || !current_gcode_filename || !current_gcode_content) {
     selected_file_info.style.display = 'none';
+    if (job_progress_info) job_progress_info.style.display = 'none';
     return;
   }
   
@@ -1371,7 +1448,70 @@ function update_file_selection_ui() {
   
   selected_file_name.textContent = current_gcode_filename;
   selected_file_details.textContent = `${lines} lines, ${size_kb} KB`;
+  
+  // Update time estimate display
+  if (current_time_estimate && selected_file_time_estimate) {
+    const time_str = GcodeTimeEstimator.format_time_duration(current_time_estimate.total_time_seconds);
+    const rapid_str = GcodeTimeEstimator.format_time_duration(current_time_estimate.rapid_moves_time);
+    const cutting_str = GcodeTimeEstimator.format_time_duration(current_time_estimate.cutting_moves_time);
+    
+    selected_file_time_estimate.textContent = `Est. time: ${time_str} (${rapid_str} rapid + ${cutting_str} cutting)`;
+    
+    // Style based on job status
+    selected_file_time_estimate.className = 'time-estimate';
+    if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+      selected_file_time_estimate.className += ' running';
+    }
+  } else if (selected_file_time_estimate) {
+    selected_file_time_estimate.textContent = 'Time estimation unavailable';
+    selected_file_time_estimate.className = 'time-estimate';
+  }
+  
   selected_file_info.style.display = 'block';
+  
+  // Show or hide progress info based on job status
+  if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+    update_job_progress_ui();
+    if (job_progress_info) job_progress_info.style.display = 'block';
+  } else {
+    if (job_progress_info) job_progress_info.style.display = 'none';
+  }
+}
+
+// Update job progress UI elements
+function update_job_progress_ui() {
+  if (!current_job_progress_tracker) return;
+  
+  const progress = current_job_progress_tracker.get_current_progress();
+  if (!progress) return;
+  
+  // Update progress percentage
+  if (progress_percent) {
+    progress_percent.textContent = `${progress.percent_complete.toFixed(1)}%`;
+  }
+  
+  // Update time information
+  if (progress_time_info) {
+    const elapsed_str = GcodeTimeEstimator.format_time_duration(progress.elapsed_time_seconds);
+    const remaining_str = GcodeTimeEstimator.format_time_duration(progress.estimated_remaining_seconds);
+    progress_time_info.textContent = `${elapsed_str} / ${remaining_str} remaining`;
+  }
+  
+  // Update progress bar
+  if (progress_bar) {
+    progress_bar.style.width = `${progress.percent_complete}%`;
+    // Add animation when job is running
+    if (current_job_progress_tracker.is_job_running()) {
+      progress_bar.className = 'progress-bar-animated';
+    } else {
+      progress_bar.className = '';
+    }
+  }
+  
+  // Update current operation
+  if (progress_operation) {
+    progress_operation.textContent = progress.current_operation;
+  }
 }
 
 async function delete_selected_file() {
@@ -1545,6 +1685,14 @@ window.addEventListener("DOMContentLoaded", () => {
   selected_file_info = document.getElementById("selected_file_info");
   selected_file_name = document.getElementById("selected_file_name");
   selected_file_details = document.getElementById("selected_file_details");
+  selected_file_time_estimate = document.getElementById("selected_file_time_estimate");
+  
+  // Job progress elements
+  job_progress_info = document.getElementById("job_progress_info");
+  progress_percent = document.getElementById("progress_percent");
+  progress_time_info = document.getElementById("progress_time_info");
+  progress_bar = document.getElementById("progress_bar");
+  progress_operation = document.getElementById("progress_operation");
   
   // Jog buttons
   jog_buttons = {
@@ -1694,6 +1842,20 @@ window.addEventListener("DOMContentLoaded", () => {
   
   // Start the status update loop
   scheduleStatusUpdate();
+  
+  // Job progress update loop (separate from status updates)
+  function scheduleProgressUpdate() {
+    setTimeout(() => {
+      if (current_job_progress_tracker && current_job_progress_tracker.is_job_running()) {
+        update_job_progress_ui();
+      }
+      // Always schedule next update
+      scheduleProgressUpdate();
+    }, 1000); // Update progress every second
+  }
+  
+  // Start the progress update loop
+  scheduleProgressUpdate();
   
   log_message("CNC Panel initialized. Click 'Connect' to discover and connect to your Genmitsu CNC.");
   
