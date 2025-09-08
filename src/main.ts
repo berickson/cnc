@@ -200,13 +200,6 @@ function update_status_display(state: CncState): void {
     case CncState.JOG_REQUESTED:
       status_text.textContent = 'Jog Requested';
       break;
-    case CncState.JOGGING:
-      status_text.textContent = 'Jogging';
-      break;
-    case CncState.HOMING:
-      log_message(`🎨 setting textContent to "Homing"`, 'info');
-      status_text.textContent = 'Homing';
-      break;
     case CncState.ALARM:
       status_indicator.className = 'status-indicator alarm';
       status_text.textContent = 'ALARM';
@@ -599,6 +592,9 @@ async function updateMachineStatus() {
         } else if (parsed.state === 'Jog') {
           log_message('📡 Sending STATUS_JOG event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_JOG, data: parsed });
+        } else if (parsed.state === 'Run') {
+          log_message('📡 Sending STATUS_RUN event to state machine', 'info');
+          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
         } else if (parsed.state === 'Home') {
           log_message('📡 Sending STATUS_HOME event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_HOME, data: parsed });

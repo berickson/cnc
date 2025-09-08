@@ -5,9 +5,7 @@ export enum CncState {
   CONNECTING = 'connecting', 
   IDLE = 'idle',
   JOG_REQUESTED = 'jog_requested',
-  JOGGING = 'jogging',
-  HOMING = 'homing',
-  RUNNING = 'running',
+  RUNNING = 'running', // Any machine movement: jog, home, presets, probing, jobs
   ALARM = 'alarm'
 }
 
@@ -32,6 +30,7 @@ export enum EventType {
   // Status poll events
   STATUS_IDLE = 'status_idle',
   STATUS_JOG = 'status_jog', 
+  STATUS_RUN = 'status_run',
   STATUS_HOME = 'status_home',
   STATUS_ALARM = 'status_alarm',
   
@@ -82,10 +81,10 @@ export class CncStateMachine {
     const old_state = this.current_state;
     this.current_state = new_state;
     
-    // Special handling for homing state entry
-    if (new_state === CncState.HOMING) {
+    // Special handling for movement state entry
+    if (new_state === CncState.RUNNING && event.type === EventType.HOME_BUTTON_CLICKED) {
       this.homing_start_time = Date.now();
-    } else if (old_state === CncState.HOMING) {
+    } else if (old_state === CncState.RUNNING) {
       this.homing_start_time = null;
     }
     
@@ -118,14 +117,6 @@ export class CncStateMachine {
           
         case CncState.JOG_REQUESTED:
           this.handle_jog_requested_state(event);
-          break;
-          
-        case CncState.JOGGING:
-          this.handle_jogging_state(event);
-          break;
-          
-        case CncState.HOMING:
-          this.handle_homing_state(event);
           break;
           
         case CncState.RUNNING:
@@ -187,12 +178,27 @@ export class CncStateMachine {
         // Normal idle status - no action needed, but log for debugging
         log_message(`🔍 STATUS_IDLE event received in idle state (normal)`, 'info');
         break;
+      case EventType.STATUS_RUN:
+        // G-code started running - transition to running state
+        log_message('🔄 G-code execution started, transitioning to running state', 'info');
+        this.transition_to(CncState.RUNNING, event);
+        break;
+      case EventType.STATUS_JOG:
+        // Jog started - transition to running state
+        log_message('🎮 Jog execution started, transitioning to running state', 'info');
+        this.transition_to(CncState.RUNNING, event);
+        break;
+      case EventType.STATUS_HOME:
+        // Homing started - transition to running state
+        log_message('🏠 Homing started, transitioning to running state', 'info');
+        this.transition_to(CncState.RUNNING, event);
+        break;
       case EventType.DISCONNECT_BUTTON_CLICKED:
         this.transition_to(CncState.DISCONNECTED, event);
         break;
       case EventType.HOME_BUTTON_CLICKED:
-        // Transition to homing immediately when button is clicked
-        this.transition_to(CncState.HOMING, event);
+        // Transition to running immediately when button is clicked
+        this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.JOG_BUTTON_CLICKED:
         this.transition_to(CncState.JOG_REQUESTED, event);
@@ -207,7 +213,7 @@ export class CncStateMachine {
   private handle_jog_requested_state(event: CncEvent): void {
     switch (event.type) {
       case EventType.COMMAND_SUCCESS:
-        this.transition_to(CncState.JOGGING, event);
+        this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.COMMAND_FAILED:
         this.transition_to(CncState.IDLE, event);
@@ -215,60 +221,6 @@ export class CncStateMachine {
       case EventType.STATUS_ALARM:
         this.transition_to(CncState.ALARM, event);
         break;
-    }
-  }
-
-  private handle_jogging_state(event: CncEvent): void {
-    switch (event.type) {
-      case EventType.STATUS_IDLE:
-        this.transition_to(CncState.IDLE, event);
-        break;
-      case EventType.STATUS_ALARM:
-        this.transition_to(CncState.ALARM, event);
-        break;
-      // STATUS_JOG is expected and doesn't change state
-    }
-  }
-
-  private handle_homing_state(event: CncEvent): void {
-    const log_message = (window as any).log_message || console.log;
-    
-    switch (event.type) {
-      case EventType.STATUS_HOME:
-        // Stay in homing state - this is expected during homing
-        log_message('🏠 Machine is actively homing...', 'info');
-        break;
-      case EventType.STATUS_IDLE:
-        // After homing starts, if we get IDLE status, it means homing is complete
-        const elapsed = this.homing_start_time ? Date.now() - this.homing_start_time : 0;
-        log_message(`🏠 STATUS_IDLE received during homing: elapsed=${elapsed}ms`, 'info');
-        
-        // If we've been homing for at least 1 second and now get IDLE, homing is done
-        if (elapsed > 1000) {
-          log_message('✅ Homing completed (detected via status polling)', 'success');
-          this.transition_to(CncState.IDLE, event);
-        } else {
-          log_message('🏠 Too early for homing completion, staying in homing state', 'info');
-        }
-        break;
-      case EventType.COMMAND_SUCCESS:
-        // Homing command completed successfully (fallback for when we do get response)
-        log_message('✅ Homing command completed successfully', 'info');
-        this.transition_to(CncState.IDLE, event);
-        break;
-      case EventType.COMMAND_FAILED:
-        // Homing command failed
-        log_message('❌ Homing command failed', 'error');
-        this.transition_to(CncState.IDLE, event);
-        break;
-      case EventType.STATUS_ALARM:
-        this.transition_to(CncState.ALARM, event);
-        break;
-      case EventType.HOMING_COMPLETE:
-        // Explicit homing completion signal (fallback)
-        this.transition_to(CncState.IDLE, event);
-        break;
-      // Stay in homing state for other events
     }
   }
 
@@ -291,18 +243,68 @@ export class CncStateMachine {
     const log_message = (window as any).log_message || console.log;
     
     switch (event.type) {
-      case EventType.OPERATION_COMPLETED:
-        log_message('✅ Operation completed, returning to idle', 'success');
-        this.transition_to(CncState.IDLE, event);
+      case EventType.STATUS_HOME:
+        // Stay in running state - this is expected during homing
+        log_message('🏠 Machine is actively homing...', 'info');
+        break;
+      case EventType.STATUS_RUN:
+        // Stay in running state - this is expected during G-code execution
+        log_message('🔄 Machine is actively running G-code...', 'info');
+        break;
+      case EventType.STATUS_JOG:
+        // Stay in running state - this is expected during jogging
+        log_message('🎮 Machine is actively jogging...', 'info');
         break;
       case EventType.STATUS_IDLE:
         // If we get idle status while running, operation completed
-        log_message('✅ Status shows idle, operation completed', 'success');
+        // For homing, check if enough time has elapsed
+        if (this.homing_start_time) {
+          const elapsed = Date.now() - this.homing_start_time;
+          log_message(`🏠 STATUS_IDLE received during homing: elapsed=${elapsed}ms`, 'info');
+          
+          // If we've been homing for at least 1 second and now get IDLE, homing is done
+          if (elapsed > 1000) {
+            log_message('✅ Homing completed (detected via status polling)', 'success');
+            this.transition_to(CncState.IDLE, event);
+          } else {
+            log_message('🏠 Too early for homing completion, staying in running state', 'info');
+          }
+        } else {
+          // For non-homing operations, idle means completed
+          log_message('✅ Status shows idle, operation completed', 'success');
+          this.transition_to(CncState.IDLE, event);
+        }
+        break;
+      case EventType.COMMAND_SUCCESS:
+        // Command completed successfully
+        if (this.homing_start_time) {
+          log_message('✅ Homing command completed successfully', 'info');
+        } else {
+          log_message('✅ Command completed successfully', 'info');
+        }
+        this.transition_to(CncState.IDLE, event);
+        break;
+      case EventType.COMMAND_FAILED:
+        // Command failed
+        if (this.homing_start_time) {
+          log_message('❌ Homing command failed', 'error');
+        } else {
+          log_message('❌ Command failed', 'error');
+        }
         this.transition_to(CncState.IDLE, event);
         break;
       case EventType.STATUS_ALARM:
         log_message('❌ Alarm during operation', 'error');
         this.transition_to(CncState.ALARM, event);
+        break;
+      case EventType.HOMING_COMPLETE:
+        // Explicit homing completion signal (fallback)
+        log_message('✅ Homing completed', 'success');
+        this.transition_to(CncState.IDLE, event);
+        break;
+      case EventType.OPERATION_COMPLETED:
+        log_message('✅ Operation completed, returning to idle', 'success');
+        this.transition_to(CncState.IDLE, event);
         break;
       case EventType.DISCONNECT_BUTTON_CLICKED:
         this.transition_to(CncState.DISCONNECTED, event);
@@ -312,6 +314,7 @@ export class CncStateMachine {
       case EventType.JOG_BUTTON_CLICKED:
         log_message('🚫 User action blocked while operation running', 'warning');
         break;
+      // Stay in running state for other events like STATUS_JOG, STATUS_RUN
     }
   }
 
@@ -324,8 +327,7 @@ export class CncStateMachine {
     return [
       CncState.CONNECTING,
       CncState.JOG_REQUESTED,
-      CncState.JOGGING, 
-      CncState.HOMING
+      CncState.RUNNING
     ].includes(this.current_state);
   }
 
