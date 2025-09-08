@@ -178,9 +178,6 @@ function update_button_states(): void {
 function update_status_display(state: CncState): void {
   if (!status_indicator || !status_text) return;
   
-  log_message(`🎨 Updating status display for state: ${state}`, 'info');
-  log_message(`🔧 DEBUG: State machine current state: ${state_machine.get_current_state()}`, 'info');
-  
   switch (state) {
     case CncState.DISCONNECTED:
       status_indicator.className = 'status-indicator';
@@ -586,21 +583,14 @@ async function updateMachineStatus() {
         
         // Send status events to state machine
         if (parsed.state === 'Idle') {
-          log_message('📡 Sending STATUS_IDLE event to state machine', 'info');
-          log_message(`🔧 DEBUG: About to call handle_event with STATUS_IDLE, state machine type: ${typeof state_machine}`, 'info');
           state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
-          log_message(`🔧 DEBUG: Called handle_event with STATUS_IDLE`, 'info');
         } else if (parsed.state === 'Jog') {
-          log_message('📡 Sending STATUS_JOG event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_JOG, data: parsed });
         } else if (parsed.state === 'Run') {
-          log_message('📡 Sending STATUS_RUN event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
         } else if (parsed.state === 'Home') {
-          log_message('📡 Sending STATUS_HOME event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_HOME, data: parsed });
         } else if (parsed.state.includes('Alarm')) {
-          log_message('📡 Sending STATUS_ALARM event to state machine', 'info');
           state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
         } else {
           log_message(`❓ Unknown status state: ${parsed.state}`, 'error');
@@ -622,8 +612,6 @@ async function updateMachineStatus() {
 
 function send_jog_command(axis: string, direction: number) {
   log_message(`🎮 Jog button clicked: ${axis} ${direction}`, 'info');
-  log_message(`🔍 Can jog: ${state_machine.can_jog()}`, 'info');
-  log_message(`📊 Current state: ${state_machine.get_current_state()}`, 'info');
   
   if (!state_machine.can_jog()) {
     log_message('🚫 Jog blocked by state machine', 'error');

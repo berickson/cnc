@@ -97,10 +97,6 @@ export class CncStateMachine {
   }
 
   handle_event(event: CncEvent): void {
-    // Import log_message to see debug output in Tauri log window
-    const log_message = (window as any).log_message || console.log;
-    log_message(`🔄 State machine (${this.instance_id}) handling event: ${event.type} in state: ${this.current_state}`, 'info');
-    
     try {
       switch (this.current_state) {
         case CncState.DISCONNECTED:
@@ -171,26 +167,20 @@ export class CncStateMachine {
   }
 
   private handle_idle_state(event: CncEvent): void {
-    const log_message = (window as any).log_message || console.log;
-    
     switch (event.type) {
       case EventType.STATUS_IDLE:
-        // Normal idle status - no action needed, but log for debugging
-        log_message(`🔍 STATUS_IDLE event received in idle state (normal)`, 'info');
+        // Normal idle status - no action needed
         break;
       case EventType.STATUS_RUN:
         // G-code started running - transition to running state
-        log_message('🔄 G-code execution started, transitioning to running state', 'info');
         this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.STATUS_JOG:
         // Jog started - transition to running state
-        log_message('🎮 Jog execution started, transitioning to running state', 'info');
         this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.STATUS_HOME:
         // Homing started - transition to running state
-        log_message('🏠 Homing started, transitioning to running state', 'info');
         this.transition_to(CncState.RUNNING, event);
         break;
       case EventType.DISCONNECT_BUTTON_CLICKED:
