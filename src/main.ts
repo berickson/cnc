@@ -104,6 +104,7 @@ interface StatusDetails {
   position_wco: string;
   alarm_code: string;
   last_updated: string;
+  state_machine_state: string;
 }
 
 let current_status_details: StatusDetails = {
@@ -113,7 +114,8 @@ let current_status_details: StatusDetails = {
   grbl_substate: 'None',
   position_wco: 'Unknown',
   alarm_code: 'None',
-  last_updated: 'Never'
+  last_updated: 'Never',
+  state_machine_state: 'disconnected'
 };
 
 // Position display elements
@@ -211,24 +213,35 @@ function update_status_display(state: CncState): void {
     case CncState.IDLE:
       status_indicator.className = 'status-indicator connected';
       status_text.textContent = 'Ready';
-      current_status_details.connection_status = 'Connected';
+      current_status_details.connection_status = 'Connected - Ready';
       break;
     case CncState.JOG_REQUESTED:
       // Note: This state is no longer used with simplified jog status
+      status_indicator.className = 'status-indicator running';
       status_text.textContent = 'Jog Requested';
+      current_status_details.connection_status = 'Jog Requested';
       break;
     case CncState.ALARM:
       status_indicator.className = 'status-indicator alarm';
       status_text.textContent = 'ALARM';
+      current_status_details.connection_status = 'ALARM State';
       break;
     case CncState.RUNNING:
       status_indicator.className = 'status-indicator running';
-      status_text.textContent = 'Running';
-      current_status_details.connection_status = 'Running Operation';
+      // Make the running status more specific based on what operation is happening
+      const state_machine_instance = state_machine;
+      if (state_machine_instance && (state_machine_instance as any).homing_start_time) {
+        status_text.textContent = 'Homing...';
+        current_status_details.connection_status = 'Running - Homing';
+      } else {
+        status_text.textContent = 'Running';
+        current_status_details.connection_status = 'Running Operation';
+      }
       break;
   }
   
   current_status_details.last_updated = new Date().toLocaleTimeString();
+  current_status_details.state_machine_state = state;
 }
 
 // Status details modal functions
@@ -600,7 +613,7 @@ async function updateMachineStatus() {
         current_status_details.grbl_substate = 'None'; // GRBL doesn't typically provide substates
         current_status_details.alarm_code = alarmCode;
         
-        // Send status events to state machine
+        // Send status events to state machine with better state detection
         if (parsed.state === 'Idle') {
           state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
         } else if (parsed.state === 'Jog') {
@@ -611,8 +624,30 @@ async function updateMachineStatus() {
           state_machine.handle_event({ type: EventType.STATUS_HOME, data: parsed });
         } else if (parsed.state.includes('Alarm')) {
           state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
+        } else if (parsed.state === 'Hold' || parsed.state === 'Hold:0' || parsed.state === 'Hold:1') {
+          // Feed hold states - machine is paused but still in a running operation
+          log_message(`⏸️ Machine in hold state: ${parsed.state}`, 'info');
+          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+        } else if (parsed.state === 'Door' || parsed.state === 'Door:0' || parsed.state === 'Door:1' || 
+                   parsed.state === 'Door:2' || parsed.state === 'Door:3') {
+          // Safety door states - machine is stopped
+          log_message(`🚪 Safety door triggered: ${parsed.state}`, 'error');
+          state_machine.handle_event({ type: EventType.STATUS_ALARM, data: parsed });
+        } else if (parsed.state === 'Check') {
+          // Check mode - machine is processing but not moving
+          log_message(`✅ Check mode active: ${parsed.state}`, 'info');
+          state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+        } else if (parsed.state === 'Sleep') {
+          // Sleep mode - treat as idle
+          log_message(`😴 Machine in sleep mode: ${parsed.state}`, 'info');
+          state_machine.handle_event({ type: EventType.STATUS_IDLE, data: parsed });
         } else {
           log_message(`❓ Unknown status state: ${parsed.state}`, 'error');
+          // For any other state, assume it's a running state if not obviously idle/alarm
+          if (!parsed.state.toLowerCase().includes('idle') && !parsed.state.toLowerCase().includes('alarm')) {
+            log_message(`🔄 Treating unknown state '${parsed.state}' as running`, 'info');
+            state_machine.handle_event({ type: EventType.STATUS_RUN, data: parsed });
+          }
         }
         
         // Update position displays
