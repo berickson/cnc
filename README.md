@@ -27,6 +27,12 @@ pnpm tauri dev
 ```bash
 pnpm tauri build
 ```
+
+### Bundling DMG
+```bash
+pnpm tauri bundle ---bundles dmg
+```
+
 3. Click "Connect to CNC" and select your CNC's USB port
 <br/>
 Panel will auto-connect on future visits
@@ -78,17 +84,4 @@ Panel will auto-connect on future visits
 - **Update Rate**: 10Hz status polling during operation
 - **Coordinates**: G54 work coordinate system
 
-## Troubleshooting
-
-**Connection Issues:**
-- Ensure Chrome/Edge browser on CNC computer
-- Check USB cable connection
-- Try refreshing page and reconnecting
-
-**Movement Issues:**
-- Check machine state in status panel
-- Ensure not in alarm state
-- Verify step size setting
-
-**Safety Reminder**: Always ensure your CNC's hardware emergency stop is functional and easily accessible during operation.
 
