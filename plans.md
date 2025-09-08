@@ -1,3 +1,20 @@
+## Support loading and sending gcode
+
+[Existing Machine Control sections above]
+
+File Operations
+┌─────────────────────────────────────┐
+│ [Load G-code File] [Clear]          │
+│                                     │
+│ Loaded: sample_project.nc           │
+│ Lines: 1,247  Est. Time: 12 min     │
+│                                     │
+│ [Send to CNC] [Preview]             │
+└─────────────────────────────────────┘
+
+[Communication Log below]
+
+
 
 
 ## Port[x] Coordinates need to update from machine status
@@ -16,9 +33,9 @@
 [x] save xy button not working
 [X] ELIFECYCLE  Command failed in console when closing app
 [x] **Auto-reconnect to last connected CNC** - Remembers last successful connection and attempts reconnect on startup
-[ ] Shouldn't allow jogging past the machine limits (maybe not needed if we honor limit switches)
-[ ] Home operation shows State "idle" while homing
-[ ] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
+[x] Shouldn't allow jogging past the machine limits (maybe not needed if we honor limit switches)
+[x] Home operation shows State "idle" while homing
+[x] need strategy for async events (e.g. set busy, wait for a bit, but timeout after a reasonable time)
 [ ] Need robust button disabling
 
 [ ] **Coordinate confidence system** - Visual indicators for coordinate reliability

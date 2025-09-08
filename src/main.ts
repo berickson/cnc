@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { open } from "@tauri-apps/plugin-dialog";
+import { copyFile, exists, readTextFile, mkdir, readDir } from "@tauri-apps/plugin-fs";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { CncManager, type CncDevice } from "./cnc_manager";
 import { RunStatistics, time_async, time_sync } from "./performance_stats";
 import { CncStateMachine, CncState, EventType, type CncEvent } from "./cnc_state_machine";
@@ -132,6 +135,22 @@ let zero_buttons: { [key: string]: HTMLButtonElement | null } = {};
 // Save XY preset elements
 let save_xy_preset_button: HTMLButtonElement | null;
 let xy_presets_list: HTMLElement | null;
+
+// G-code file operation elements
+let load_gcode_button: HTMLButtonElement | null;
+let refresh_files_button: HTMLButtonElement | null;
+let send_gcode_button: HTMLButtonElement | null;
+let delete_gcode_button: HTMLButtonElement | null;
+let gcode_files_list: HTMLElement | null;
+let selected_file_info: HTMLElement | null;
+let selected_file_name: HTMLElement | null;
+let selected_file_details: HTMLElement | null;
+
+// G-code file state
+let current_gcode_content: string | null = null;
+let current_gcode_filename: string | null = null;
+let gcode_files_in_database: string[] = [];
+let selected_file_index: number = -1;
 
 // Global state management
 const state_machine = new CncStateMachine();
@@ -1005,6 +1024,248 @@ function editSavedXyPosition(oldName: string) {
   });
 }
 
+// ======================== G-code File Operations ========================
+
+async function load_gcode_file() {
+  try {
+    // Open file dialog for G-code files
+    const selected = await open({
+      multiple: false,
+      filters: [{
+        name: 'G-code Files',
+        extensions: ['gcode', 'cnc', 'nc', 'txt']
+      }]
+    });
+
+    if (!selected || typeof selected !== 'string') {
+      return;
+    }
+
+    // Read the file content
+    const content = await readTextFile(selected);
+    const filename = selected.split('/').pop() || 'unknown.gcode';
+    
+    // Create gcode directory in app data if it doesn't exist
+    const app_data_path = await appDataDir();
+    const gcode_dir = await join(app_data_path, 'gcode');
+    
+    try {
+      await mkdir(gcode_dir, { recursive: true });
+    } catch (error) {
+      // Directory might already exist, continue
+    }
+    
+    // Copy file to our gcode database directory
+    const dest_path = await join(gcode_dir, filename);
+    
+    // Check if file already exists
+    const file_exists = await exists(dest_path);
+    if (file_exists) {
+      log_message(`File "${filename}" already exists in database`, 'error');
+      // For now, we don't allow overwriting - user can rename manually
+      return;
+    }
+    
+    // Copy the file - this must succeed
+    await copyFile(selected, dest_path);
+    
+    // Refresh the file list to show the new file
+    await refresh_gcode_files_list();
+    
+    log_message(`Loaded G-code file: ${filename}`, 'success');
+    
+  } catch (error) {
+    log_message(`Error loading G-code file: ${error}`, 'error');
+  }
+}
+
+async function send_gcode_to_cnc() {
+  if (!current_gcode_content || !current_gcode_filename) {
+    log_message('No G-code file loaded', 'error');
+    return;
+  }
+  
+  if (!state_machine.is_connected()) {
+    log_message('Not connected to CNC', 'error');
+    return;
+  }
+  
+  // TODO: This will send the entire G-code at once
+  // In the future, we might want to send line by line with proper status feedback
+  try {
+    log_message(`Sending G-code file: ${current_gcode_filename}`, 'info');
+    
+    // For now, just send the entire content as one command
+    // This assumes GRBL can handle large G-code blocks
+    await invoke("send_cnc_command", { command: current_gcode_content });
+    log_message(`G-code sent successfully`, 'success');
+    
+  } catch (error) {
+    log_message(`Error sending G-code: ${error}`, 'error');
+  }
+}
+
+// ======================== G-code Database Management (MVC) ========================
+
+async function refresh_gcode_files_list() {
+  try {
+    const app_data_path = await appDataDir();
+    const gcode_dir = await join(app_data_path, 'gcode');
+    
+    // Check if gcode directory exists
+    const dir_exists = await exists(gcode_dir);
+    if (!dir_exists) {
+      gcode_files_in_database = [];
+      update_files_list_ui();
+      return;
+    }
+    
+    // Read directory contents
+    const entries = await readDir(gcode_dir);
+    gcode_files_in_database = entries
+      .filter(entry => !entry.isDirectory && entry.name)
+      .map(entry => entry.name!)
+      .filter(name => name.endsWith('.gcode') || name.endsWith('.cnc') || name.endsWith('.nc') || name.endsWith('.txt'))
+      .sort();
+    
+    update_files_list_ui();
+    
+  } catch (error) {
+    log_message(`Error reading file database: ${error}`, 'error');
+    gcode_files_in_database = [];
+    update_files_list_ui();
+  }
+}
+
+function update_files_list_ui() {
+  if (!gcode_files_list) return;
+  
+  if (gcode_files_in_database.length === 0) {
+    gcode_files_list.innerHTML = `
+      <div style="font-size: 11px; color: #666; text-align: center; padding: 20px;">
+        No G-code files in database<br>
+        <span style="font-size: 10px;">Click "Load G-code File" to add files</span>
+      </div>
+    `;
+    clear_file_selection();
+    return;
+  }
+  
+  const files_html = gcode_files_in_database.map((filename, index) => `
+    <div class="gcode-file-item" data-index="${index}" 
+         style="padding: 6px; margin: 2px 0; background: ${index === selected_file_index ? '#007bff' : '#fff'}; 
+                color: ${index === selected_file_index ? 'white' : 'black'}; 
+                border: 1px solid #ddd; border-radius: 3px; cursor: pointer; font-size: 11px;
+                hover: background-color: ${index === selected_file_index ? '#0056b3' : '#f0f0f0'};">
+      📄 ${filename}
+    </div>
+  `).join('');
+  
+  gcode_files_list.innerHTML = files_html;
+  
+  // Add click handlers to file items
+  const file_items = gcode_files_list.querySelectorAll('.gcode-file-item');
+  file_items.forEach((item, index) => {
+    item.addEventListener('click', () => select_file(index));
+  });
+}
+
+async function select_file(index: number) {
+  if (index < 0 || index >= gcode_files_in_database.length) {
+    clear_file_selection();
+    return;
+  }
+  
+  selected_file_index = index;
+  current_gcode_filename = gcode_files_in_database[index];
+  
+  try {
+    // Load the file content
+    const app_data_path = await appDataDir();
+    const gcode_dir = await join(app_data_path, 'gcode');
+    const file_path = await join(gcode_dir, current_gcode_filename);
+    
+    current_gcode_content = await readTextFile(file_path);
+    
+    // Update UI
+    update_files_list_ui(); // Refresh to show selection
+    update_file_selection_ui();
+    
+    // Enable/disable buttons
+    if (send_gcode_button) {
+      send_gcode_button.disabled = false;
+    }
+    if (delete_gcode_button) {
+      delete_gcode_button.disabled = false;
+    }
+    
+  } catch (error) {
+    log_message(`Error loading file from database: ${error}`, 'error');
+    clear_file_selection();
+  }
+}
+
+function clear_file_selection() {
+  selected_file_index = -1;
+  current_gcode_filename = null;
+  current_gcode_content = null;
+  
+  update_files_list_ui();
+  update_file_selection_ui();
+  
+  // Disable buttons
+  if (send_gcode_button) {
+    send_gcode_button.disabled = true;
+  }
+  if (delete_gcode_button) {
+    delete_gcode_button.disabled = true;
+  }
+}
+
+function update_file_selection_ui() {
+  if (!selected_file_info || !selected_file_name || !selected_file_details) return;
+  
+  if (selected_file_index === -1 || !current_gcode_filename || !current_gcode_content) {
+    selected_file_info.style.display = 'none';
+    return;
+  }
+  
+  const lines = current_gcode_content.split('\n').length;
+  const size_kb = (current_gcode_content.length / 1024).toFixed(1);
+  
+  selected_file_name.textContent = current_gcode_filename;
+  selected_file_details.textContent = `${lines} lines, ${size_kb} KB`;
+  selected_file_info.style.display = 'block';
+}
+
+async function delete_selected_file() {
+  if (selected_file_index === -1 || !current_gcode_filename) {
+    log_message('No file selected for deletion', 'error');
+    return;
+  }
+  
+  const confirmed = confirm(`Delete "${current_gcode_filename}" from database?`);
+  if (!confirmed) return;
+  
+  try {
+    const app_data_path = await appDataDir();
+    const gcode_dir = await join(app_data_path, 'gcode');
+    const file_path = await join(gcode_dir, current_gcode_filename);
+    
+    // Delete the file (we'll need to add this permission)
+    await invoke('delete_file', { path: file_path });
+    
+    log_message(`Deleted "${current_gcode_filename}" from database`, 'success');
+    
+    // Refresh the list
+    await refresh_gcode_files_list();
+    clear_file_selection();
+    
+  } catch (error) {
+    log_message(`Error deleting file: ${error}`, 'error');
+  }
+}
+
 // Update the XY presets UI
 function updateXyPresetsUi() {
   if (!xy_presets_list) return;
@@ -1135,6 +1396,16 @@ window.addEventListener("DOMContentLoaded", () => {
   save_xy_preset_button = document.getElementById("save_xy_preset_button") as HTMLButtonElement;
   xy_presets_list = document.getElementById("xy_presets_list");
   
+  // G-code file operation elements
+  load_gcode_button = document.getElementById("load_gcode_button") as HTMLButtonElement;
+  refresh_files_button = document.getElementById("refresh_files_button") as HTMLButtonElement;
+  send_gcode_button = document.getElementById("send_gcode_button") as HTMLButtonElement;
+  delete_gcode_button = document.getElementById("delete_gcode_button") as HTMLButtonElement;
+  gcode_files_list = document.getElementById("gcode_files_list");
+  selected_file_info = document.getElementById("selected_file_info");
+  selected_file_name = document.getElementById("selected_file_name");
+  selected_file_details = document.getElementById("selected_file_details");
+  
   // Jog buttons
   jog_buttons = {
     'x_plus': document.getElementById("jog_x_plus_button") as HTMLButtonElement,
@@ -1223,9 +1494,29 @@ window.addEventListener("DOMContentLoaded", () => {
     save_xy_preset_button.addEventListener("click", () => save_current_xy_position());
   }
   
+  // G-code file operation functionality
+  if (load_gcode_button) {
+    load_gcode_button.addEventListener("click", load_gcode_file);
+  }
+  
+  if (refresh_files_button) {
+    refresh_files_button.addEventListener("click", refresh_gcode_files_list);
+  }
+  
+  if (send_gcode_button) {
+    send_gcode_button.addEventListener("click", send_gcode_to_cnc);
+  }
+  
+  if (delete_gcode_button) {
+    delete_gcode_button.addEventListener("click", delete_selected_file);
+  }
+  
   // Load saved XY coordinates and update UI
   saved_xy_coordinates = load_saved_xy_coordinates();
   updateXyPresetsUi();
+  
+  // Initialize G-code file database view
+  refresh_gcode_files_list();
   
   // Initial state
   update_connection_status(false);

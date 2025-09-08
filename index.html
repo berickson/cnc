@@ -509,6 +509,35 @@
           </div>
         </div>
       </div>
+      
+      <div class="panel" style="margin-top: 8px;">
+        <h3 style="margin: 0 0 8px 0; font-size: 14px;">G-code Files</h3>
+        
+        <div style="display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+          <button id="load_gcode_button" style="font-size: 12px; padding: 6px 12px;">Load G-code File</button>
+          <button id="refresh_files_button" style="font-size: 12px; padding: 6px 8px;">↻</button>
+        </div>
+        
+        <div id="gcode_files_list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; background: #f9f9f9; padding: 4px; margin-bottom: 8px;">
+          <div style="font-size: 11px; color: #666; text-align: center; padding: 20px;">
+            Loading files...
+          </div>
+        </div>
+        
+        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+          <button id="send_gcode_button" style="font-size: 12px; padding: 6px 12px;" disabled>Send to CNC</button>
+          <button id="delete_gcode_button" style="font-size: 12px; padding: 6px 12px;" disabled>Delete</button>
+        </div>
+        
+        <div id="selected_file_info" style="display: none; background: #e8f4fd; padding: 8px; border-radius: 4px; margin-bottom: 8px; border-left: 3px solid #007bff;">
+          <div style="font-size: 12px; font-weight: bold; margin-bottom: 4px;" id="selected_file_name">No file selected</div>
+          <div style="font-size: 11px; color: #666;" id="selected_file_details">Select a file from the list above</div>
+        </div>
+        
+        <div style="font-size: 11px; color: #666;">
+          Files are stored in local database for safe keeping
+        </div>
+      </div>
     </div>
     
     <div id="error_container" style="grid-column: 1 / -1; min-height: 0;"></div>
